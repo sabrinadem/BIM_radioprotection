@@ -1,8 +1,7 @@
 """
-PYQT.py
+APP.py
 ===========
-Interface graphique PyQt5 pour le calcul d'attenuation du composite
-PEEK/Bi2O3, quelle que soit la source de rayonnement.
+Interface graphique PyQt5 pour le calcul d'attenuation de composite, quelle que soit la source de rayonnement.
 
 """
 
@@ -117,11 +116,11 @@ class MainWindow(QMainWindow):
         form_composite = QFormLayout()
 
         self.combo_charge = QComboBox()
-        self.combo_charge.addItems(["Bi2O3", "W"])  # extensible plus tard
+        self.combo_charge.addItems(["Bi2O3", "W", "Pb"])  
         form_composite.addRow("Charge (element lourd) :", self.combo_charge)
 
         self.combo_matrice = QComboBox()
-        self.combo_matrice.addItems(["PEEK", "TPU", "PLA", "PETG"])  # extensible plus tard
+        self.combo_matrice.addItems(["PEEK", "TPU", "PLA", "PETG"])  
         form_composite.addRow("Matrice (polymere) :", self.combo_matrice)
 
         self.spin_fraction = QDoubleSpinBox()
@@ -151,14 +150,14 @@ class MainWindow(QMainWindow):
         self.spin_epaisseur_max.setSuffix(" mm")
         self.spin_epaisseur_max.setDecimals(2)
         self.spin_epaisseur_max.setValue(10.0)
-        form_params.addRow("Épaisseur max (graph. 1) :", self.spin_epaisseur_max)
+        form_params.addRow("Épaisseur max (affichage axe) :", self.spin_epaisseur_max)
 
         self.spin_epaisseur_fixe = QDoubleSpinBox()
         self.spin_epaisseur_fixe.setRange(0.001, 100.0)
         self.spin_epaisseur_fixe.setSuffix(" mm")
         self.spin_epaisseur_fixe.setDecimals(3)
         self.spin_epaisseur_fixe.setValue(1.0)
-        form_params.addRow("Épaisseur fixe (graph. 2) :", self.spin_epaisseur_fixe)
+        form_params.addRow("Épaisseur fixe (graph. 5-6) :", self.spin_epaisseur_fixe)
 
         self.spin_pct_cible = QDoubleSpinBox()
         self.spin_pct_cible.setRange(0.0, 99.9999)
@@ -222,6 +221,9 @@ class MainWindow(QMainWindow):
 
         self.canvas_vs_fraction = MplCanvas(figsize=(7, 5))
         self.onglets.addTab(self._wrap_canvas(self.canvas_vs_fraction), "Atténuation vs % charge")
+
+        self.canvas_vs_energie = MplCanvas(figsize=(7, 5))
+        self.onglets.addTab(self._wrap_canvas(self.canvas_vs_energie), "Atténuation vs énergie")
 
         return self.onglets
 
@@ -295,6 +297,8 @@ class MainWindow(QMainWindow):
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_max_mm)
             resultats_num = self._maj_resultats(
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_fixe_mm, pct_cible)
+            E_plot, pct_vs_energie = self._tracer_vs_energie(
+                mode, nom_charge, nom_matrice, w_frac, ep_fixe_mm)
 
             # On garde tout ce qu'il faut pour l'export, sans rien recalculer
             self.dernier_calcul = {
@@ -470,7 +474,45 @@ class MainWindow(QMainWindow):
         return x_mm, mu_rho_eff_vals
 
 
-#attenuation vs enerie (ajouter un nouveau Graphique)
+# --- Graphique 6 : % attenuation vs énergie -------------------------
+    def _tracer_vs_energie(self, mode, nom_charge, nom_matrice, w_frac, ep_fixe_mm):
+        E_plot = np.linspace(4, 60, 400)
+        x_cm = ep_fixe_mm / 10
+
+        nom_charge_aff = CHARGES[nom_charge]["nom_affiche"]
+        nom_matrice_aff = MATRICES[nom_matrice]["nom_affiche"]
+
+        pct = np.array([
+            pourcentage_attenuation(np.array([E]), np.array([1.0]), mode, w_frac, x_cm,
+                                     nom_charge=nom_charge, nom_matrice=nom_matrice)[0]
+            for E in E_plot
+        ])
+
+        c = self.canvas_vs_energie
+        c.clear()
+        ax = c.axes
+        ax.plot(E_plot, pct, color="tab:green",
+                label=f"Composite ({w_frac*100:.1f} % {nom_charge_aff})")
+
+        if nom_charge == "Bi2O3":
+            for seuil in (13.4186, 15.7111, 16.3875):
+                ax.axvline(seuil, color="gray", linestyle=":", linewidth=0.8)
+        elif nom_charge == "W":
+            for seuil in (10.207, 11.544, 12.100):
+                ax.axvline(seuil, color="gray", linestyle=":", linewidth=0.8)
+
+        ax.set_xlabel("Énergie (keV)")
+        ax.set_ylabel("% atténuation")
+        ax.set_title(f"Atténuation vs énergie ({w_frac*100:.1f} % {nom_charge_aff}, "
+                     f"épaisseur = {ep_fixe_mm:.3f} mm)")
+        ax.legend()
+        ax.xaxis.set_major_locator(MultipleLocator(5.0))
+        ax.yaxis.set_major_locator(MultipleLocator(10.0))
+        ax.set_ylim(0, 105)
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+        c.draw()
+        return E_plot, pct
+
 
     # --- Panneau de resultats numeriques -------------------------------
     def _maj_resultats(self, E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_fixe_mm, pct_cible):
@@ -592,6 +634,7 @@ class MainWindow(QMainWindow):
             self.canvas_vs_fraction.fig.savefig(os.path.join(sous_dossier, "graphique_vs_fraction.png"), dpi=200)
             self.canvas_mu_rho.fig.savefig(os.path.join(sous_dossier, "graphique_mu_rho_composite.png"), dpi=200)
             self.canvas_mu_rho_eff.fig.savefig(os.path.join(sous_dossier, "graphique_mu_rho_effectif.png"), dpi=200)
+            self.canvas_vs_energie.fig.savefig(os.path.join(sous_dossier, "graphique_vs_energie.png"), dpi=200)
 
             QMessageBox.information(
                 self, "Export reussi",
