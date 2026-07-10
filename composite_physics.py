@@ -132,6 +132,8 @@ RHO_TPU = 1.20
 RHO_PB = 11.35      # plomb pur (element)
 
 
+
+
 # =====================================================================
 # 1bis. DONNEES NIST : mu_en/rho (cm2/g), coefficient d'absorption
 #       d'energie massique -> utile pour calculs de dose (radioprotection)
@@ -305,9 +307,25 @@ w_PEEK = fractions_massiques({"C": 19, "H": 12, "O": 3})
 # technique / analyse elementaire CHN) avant utilisation finale.
 w_TPU = {"C": 0.63, "H": 0.08, "N": 0.04, "O": 0.25}
 
+# --- Nouvelles Matrices (PLA et PETG) ---
+# Formules chimiques : PLA (C3H4O2)n, PETG (C10H8O4)n approximatif
+# Les fractions sont calculées via la masse molaire.
+
+# PLA (C3 H4 O2) : M_total = 3*12.011 + 4*1.008 + 2*15.999 = 72.063
+w_PLA = {"C": (3*12.011)/72.063, "H": (4*1.008)/72.063, "O": (2*15.999)/72.063}
+
+# PETG (C10 H8 O4) : M_total = 10*12.011 + 8*1.008 + 4*15.999 = 192.17
+w_PETG = {"C": (10*12.011)/192.17, "H": (8*1.008)/192.17, "O": (4*15.999)/192.17}
+
+# Densités typiques (g/cm3)
+RHO_PLA = 1.25
+RHO_PETG = 1.27
+
 MATRICES = {
     "PEEK": {"densite": RHO_PEEK, "fractions": w_PEEK, "nom_affiche": "PEEK"},
     "TPU":  {"densite": RHO_TPU,  "fractions": w_TPU,  "nom_affiche": "TPU"},
+    "PLA":  {"densite": RHO_PLA,  "fractions": w_PLA,  "nom_affiche": "PLA"},
+    "PETG": {"densite": RHO_PETG, "fractions": w_PETG, "nom_affiche": "PETG"},
 }
 
 
@@ -325,6 +343,12 @@ def mu_rho_Bi2O3(E_keV):
 
 def mu_rho_PEEK(E_keV):
     return mu_rho_matrice(E_keV, "PEEK")
+
+def mu_rho_PLA(E_keV):
+    return mu_rho_matrice(E_keV, "PLA")
+
+def mu_rho_PETG(E_keV):
+    return mu_rho_matrice(E_keV, "PETG")
 
 def mu_rho_composite(E_keV, w_frac_charge, nom_charge="Bi2O3", nom_matrice="PEEK"):
     return (w_frac_charge * mu_rho_charge(E_keV, nom_charge) +

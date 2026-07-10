@@ -121,7 +121,7 @@ class MainWindow(QMainWindow):
         form_composite.addRow("Charge (element lourd) :", self.combo_charge)
 
         self.combo_matrice = QComboBox()
-        self.combo_matrice.addItems(["PEEK", "TPU"])  # extensible plus tard
+        self.combo_matrice.addItems(["PEEK", "TPU", "PLA", "PETG"])  # extensible plus tard
         form_composite.addRow("Matrice (polymere) :", self.combo_matrice)
 
         self.spin_fraction = QDoubleSpinBox()
