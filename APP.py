@@ -225,6 +225,9 @@ class MainWindow(QMainWindow):
         self.canvas_vs_energie = MplCanvas(figsize=(7, 5))
         self.onglets.addTab(self._wrap_canvas(self.canvas_vs_energie), "Atténuation vs énergie")
 
+        self.canvas_equiv_plomb = MplCanvas(figsize=(7, 5))
+        self.onglets.addTab(self._wrap_canvas(self.canvas_equiv_plomb), "Équivalence 0.5mm Pb")
+
         return self.onglets
 
     @staticmethod
@@ -299,6 +302,9 @@ class MainWindow(QMainWindow):
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_fixe_mm, pct_cible)
             E_plot, pct_vs_energie = self._tracer_vs_energie(
                 mode, nom_charge, nom_matrice, w_frac, ep_fixe_mm)
+            
+            # --- Nouvel appel pour le graphique d'équivalence Plomb ---
+            self._tracer_equivalence_plomb(w_frac, nom_charge, nom_matrice)
 
             # On garde tout ce qu'il faut pour l'export, sans rien recalculer
             self.dernier_calcul = {
@@ -553,7 +559,57 @@ class MainWindow(QMainWindow):
             "mu_rho_effectif": mu_rho_eff,
             "rho_composite": rho,
         }
-
+    def _tracer_equivalence_plomb(self, w_frac, nom_charge, nom_matrice):
+        from attenuation import epaisseur_pour_blocage, pourcentage_attenuation
+        
+        # Plage d'énergies pour le graphique
+        energies = np.linspace(15, 150, 50)
+        ep_cibles_mm = []
+        
+        for E in energies:
+            try:
+                # Calcul de l'atténuation cible avec 0.5mm de Plomb (Pb)
+                # On utilise "PLA" comme matrice neutre car le Pb est la charge à 100%
+                pct_cible, _, _ = pourcentage_attenuation(
+                    np.array([E]), 
+                    np.array([1.0]), 
+                    "discret", 
+                    w_frac_charge=1.0, 
+                    epaisseur_cm=0.05, 
+                    nom_charge="Pb", 
+                    nom_matrice="PLA" 
+                )
+                
+                # Sécurité : Plafonnement de la cible à 99.9%
+                pct_cible = min(pct_cible, 99.9)
+                
+                # Calcul de l'épaisseur composite équivalente
+                x_cm = epaisseur_pour_blocage(
+                    np.array([E]), 
+                    np.array([1.0]), 
+                    "discret", 
+                    w_frac, 
+                    pourcentage_cible=pct_cible, 
+                    x_min=0.0001, 
+                    x_max=5.0,
+                    nom_charge=nom_charge, 
+                    nom_matrice=nom_matrice
+                )
+                ep_cibles_mm.append(x_cm * 10)
+            except:
+                # Ajoute None si le calcul échoue pour une énergie donnée
+                ep_cibles_mm.append(None)
+        
+        # Tracé du graphique dans le canvas dédié
+        c = self.canvas_equiv_plomb
+        c.clear()
+        ax = c.axes
+        ax.plot(energies, ep_cibles_mm, color="tab:orange", linewidth=2)
+        ax.set_xlabel("Énergie (keV)")
+        ax.set_ylabel("Épaisseur composite nécessaire (mm)")
+        ax.set_title("Épaisseur équivalente à 0.5 mm de Plomb")
+        ax.grid(True, alpha=0.3)
+        c.draw()
     # ------------------------------------------------------------------
     #  EXPORT DES RESULTATS
     # ------------------------------------------------------------------
@@ -646,6 +702,8 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Erreur - export", f"Impossible d'exporter les résultats :\n{exc}")
             traceback.print_exc()
+
+
 
 
 def main():
