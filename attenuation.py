@@ -50,51 +50,36 @@ def pourcentage_attenuation(E_array, I_array, mode, w_frac_charge, epaisseur_cm,
         nom_charge=nom_charge, nom_matrice=nom_matrice
     )
     flux_incident = _flux_integre(E_array, I_array, mode)
-    flux_transmis = _flux_integre(E_array, I_transmis, mode)
+    flux_transmis = _flux_integre(E_array, I_transmis, mode)   
     pct = (1 - flux_transmis / flux_incident) * 100
     return pct, flux_incident, flux_transmis
 
-def epaisseur_composite_equivalente_plomb(
-    E_array, I_array, mode, w_frac_composite, 
-    nom_charge, nom_matrice, ep_plomb_cm=0.05
-):
+# Ajout/Modification dans attenuation.py
+def epaisseur_composite_equivalente_plomb(E_spec, I_spec, mode, w_frac, nom_charge, nom_matrice):
     """
-    Calcule l'épaisseur de composite nécessaire pour obtenir le même % 
-    d'atténuation que 0.5mm (0.05cm) de plomb pur.
+    Calcule l'épaisseur composite nécessaire pour égaler 0.5 mm de plomb.
     """
-    # 1. Calculer l'atténuation cible avec 0.5mm de plomb pur
-    # Note: On utilise 'Pb' comme nom de charge pour simuler le plomb
+    from composite_physics import LAC_composite
+    
+    # 1. Calculer l'atténuation cible avec 0.5 mm de Plomb (Pb)
+    # On force une matrice neutre (ex: "PLA") et w_frac=1.0 pour simuler le Pb pur
     pct_cible, _, _ = pourcentage_attenuation(
-        E_array, I_array, mode, 1.0, ep_plomb_cm, 
-        nom_charge="Pb", nom_matrice="Pb"
+        E_spec, I_spec, mode, w_frac_charge=1.0, epaisseur_cm=0.05, 
+        nom_charge="Pb", nom_matrice="PLA"
     )
     
-    # 2. Calculer l'épaisseur nécessaire du composite pour cette cible
-    ep_composite_cm = epaisseur_pour_blocage(
-        E_array, I_array, mode, w_frac_composite, 
-        pourcentage_cible=pct_cible, 
+    # 2. Sécurité : Plafonnement à 99.9%
+    pct_cible = min(pct_cible, 99.9999)
+    
+    # 3. Calcul de l'épaisseur composite
+    x_cm = epaisseur_pour_blocage(
+        E_spec, I_spec, mode, w_frac, 
+        pourcentage_cible=pct_cible, x_min=0.0001, x_max=5.0,
         nom_charge=nom_charge, nom_matrice=nom_matrice
     )
-    
-    return pct_cible, ep_composite_cm * 10  # Retourne en mm
+    return pct_cible, x_cm * 10 # Retourne l'épaisseur en mm
 
-def calculer_courbe_equivalence(E_min, E_max, w_frac_charge, nom_charge, nom_matrice):
-    """Génère les données pour le graphique d'épaisseur équivalente."""
-    energies = np.linspace(E_min, E_max, 50)
-    epaisseurs = []
-    
-    for E in energies:
-        # On simule une source quasi-monoénergétique (raie unique)
-        I_dummy = np.array([1.0])
-        E_dummy = np.array([E])
-        
-        # Calcul direct avec la fonction créée précédemment
-        _, ep_mm = epaisseur_composite_equivalente_plomb(
-            E_dummy, I_dummy, "discret", w_frac_charge, nom_charge, nom_matrice
-        )
-        epaisseurs.append(ep_mm)
-    
-    return energies, epaisseurs
+
 
 def epaisseur_pour_blocage(E_array, I_array, mode, w_frac_charge,
                             pourcentage_cible=99.0, x_min=1e-5, x_max=5.0,
@@ -111,6 +96,17 @@ def epaisseur_pour_blocage(E_array, I_array, mode, w_frac_charge,
         return pct - pourcentage_cible
 
     return brentq(f, x_min, x_max)
+
+"""
+chemin_fichier = r"F:\code_BIM_Sabrina\BIM_radioprotection\spekcalc\40kVp 30deg 1000Air 0.8Be 1.2Al 0Cu 0Sn 0W 0Ta 0Ti 0C 0Wa.spec"
+data = np.loadtxt(chemin_fichier, skiprows=18)
+E_array, I_array = data[:, 0], data[:, 1]
+idx = np.argsort(E_array)
+
+kvp40 = epaisseur_composite_equivalente_plomb(E_array, I_array, "continu", 0.80, "W", "TPU")
+"""
+
+
 
 
 # =====================================================================

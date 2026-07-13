@@ -65,6 +65,7 @@ class MainWindow(QMainWindow):
         self.resize(1300, 800)
 
         self.chemin_fichier_spectre = None
+        self.chemins_fichiers_multiples = []  # pour la comparaison multi-spectres (onglet équivalence Pb)
         self.dernier_calcul = None  # rempli par _calculer(), utilise par _exporter_resultats()
 
         splitter = QSplitter(Qt.Horizontal)
@@ -110,6 +111,25 @@ class MainWindow(QMainWindow):
 
         groupe_source.setLayout(form_source)
         layout.addWidget(groupe_source)
+
+        # --- Groupe : comparaison multi-spectres (onglet équivalence Pb) --
+        groupe_multi = QGroupBox("Comparaison multi-spectres (onglet Équivalence Pb)")
+        v_multi = QVBoxLayout()
+
+        self.bouton_fichiers_multiples = QPushButton("Sélectionner plusieurs fichiers .spec...")
+        self.bouton_fichiers_multiples.clicked.connect(self._choisir_fichiers_multiples)
+        v_multi.addWidget(self.bouton_fichiers_multiples)
+
+        self.label_fichiers_multiples = QLabel("Aucun fichier sélectionné (mode % charge utilisé)")
+        self.label_fichiers_multiples.setWordWrap(True)
+        v_multi.addWidget(self.label_fichiers_multiples)
+
+        self.bouton_effacer_multiples = QPushButton("Effacer la sélection")
+        self.bouton_effacer_multiples.clicked.connect(self._effacer_fichiers_multiples)
+        v_multi.addWidget(self.bouton_effacer_multiples)
+
+        groupe_multi.setLayout(v_multi)
+        layout.addWidget(groupe_multi)
 
         # --- Groupe : composite (materiau) ----------------------------
         groupe_composite = QGroupBox("Composite (materiau NIST)")
@@ -252,6 +272,24 @@ class MainWindow(QMainWindow):
             self.chemin_fichier_spectre = chemin
             self.ligne_fichier.setText(chemin)
 
+    def _choisir_fichiers_multiples(self):
+        """Selection de plusieurs fichiers .spec en une fois, pour comparer
+        directement leurs epaisseurs equivalentes a 0.5 mm Pb sans avoir a
+        changer la source dans le menu deroulant a chaque fois."""
+        chemins, _ = QFileDialog.getOpenFileNames(
+            self, "Choisir plusieurs fichiers de spectre (.spec)", "",
+            "Fichiers spectre (*.spec);;Tous les fichiers (*)"
+        )
+        if chemins:
+            self.chemins_fichiers_multiples = chemins
+            self.label_fichiers_multiples.setText(
+                f"{len(chemins)} fichier(s) sélectionné(s) pour la comparaison."
+            )
+
+    def _effacer_fichiers_multiples(self):
+        self.chemins_fichiers_multiples = []
+        self.label_fichiers_multiples.setText("Aucun fichier sélectionné (mode % charge utilisé)")
+
     def _maj_densite(self):
         w = self.spin_fraction.value() / 100
         nom_charge = self.combo_charge.currentText()
@@ -304,7 +342,7 @@ class MainWindow(QMainWindow):
                 mode, nom_charge, nom_matrice, w_frac, ep_fixe_mm)
             
             # --- Nouvel appel pour le graphique d'équivalence Plomb ---
-            self._tracer_equivalence_plomb(w_frac, nom_charge, nom_matrice)
+            self._tracer_equivalence_kvp(E_array, I_array, mode, w_frac, nom_charge, nom_matrice)
 
             # On garde tout ce qu'il faut pour l'export, sans rien recalculer
             self.dernier_calcul = {
@@ -559,57 +597,102 @@ class MainWindow(QMainWindow):
             "mu_rho_effectif": mu_rho_eff,
             "rho_composite": rho,
         }
-    def _tracer_equivalence_plomb(self, w_frac, nom_charge, nom_matrice):
-        from attenuation import epaisseur_pour_blocage, pourcentage_attenuation
-        
-        # Plage d'énergies pour le graphique
-        energies = np.linspace(15, 150, 50)
-        ep_cibles_mm = []
-        
-        for E in energies:
-            try:
-                # Calcul de l'atténuation cible avec 0.5mm de Plomb (Pb)
-                # On utilise "PLA" comme matrice neutre car le Pb est la charge à 100%
-                pct_cible, _, _ = pourcentage_attenuation(
-                    np.array([E]), 
-                    np.array([1.0]), 
-                    "discret", 
-                    w_frac_charge=1.0, 
-                    epaisseur_cm=0.05, 
-                    nom_charge="Pb", 
-                    nom_matrice="PLA" 
-                )
-                
-                # Sécurité : Plafonnement de la cible à 99.9%
-                pct_cible = min(pct_cible, 99.9)
-                
-                # Calcul de l'épaisseur composite équivalente
-                x_cm = epaisseur_pour_blocage(
-                    np.array([E]), 
-                    np.array([1.0]), 
-                    "discret", 
-                    w_frac, 
-                    pourcentage_cible=pct_cible, 
-                    x_min=0.0001, 
-                    x_max=5.0,
-                    nom_charge=nom_charge, 
-                    nom_matrice=nom_matrice
-                )
-                ep_cibles_mm.append(x_cm * 10)
-            except:
-                # Ajoute None si le calcul échoue pour une énergie donnée
-                ep_cibles_mm.append(None)
-        
-        # Tracé du graphique dans le canvas dédié
+
+    def _tracer_equivalence_kvp(self, E_array, I_array, mode, w_frac, nom_charge, nom_matrice):
+        """
+        Épaisseur de composite équivalente à 0.5 mm de plomb.
+
+        Deux modes, selon que des fichiers multiples ont ete choisis
+        (bouton "Sélectionner plusieurs fichiers .spec...") ou non :
+
+        - Mode COMPARAISON (fichiers multiples selectionnes) : un point/barre
+          par fichier, epaisseur equivalente calculee pour CHAQUE spectre a
+          la fraction/charge/matrice actuellement reglees dans l'interface.
+          Utile pour comparer par ex. 8 spectres SpekCalc (differents kVp)
+          sans avoir a changer la source dans le menu deroulant a chaque fois.
+
+        - Mode FRACTION (aucun fichier multiple) : courbe epaisseur
+          equivalente vs fraction massique de charge, pour la source UNIQUE
+          deja chargee via le menu deroulant / "Parcourir...".
+        """
+        from attenuation import epaisseur_composite_equivalente_plomb
+        import re
+
         c = self.canvas_equiv_plomb
         c.clear()
         ax = c.axes
-        ax.plot(energies, ep_cibles_mm, color="tab:orange", linewidth=2)
-        ax.set_xlabel("Énergie (keV)")
-        ax.set_ylabel("Épaisseur composite nécessaire (mm)")
-        ax.set_title("Épaisseur équivalente à 0.5 mm de Plomb")
+
+        if self.chemins_fichiers_multiples:
+            # ---------------- Mode comparaison multi-spectres -----------
+            labels, epaisseurs = [], []
+            for chemin in self.chemins_fichiers_multiples:
+                nom_fichier = os.path.basename(chemin)
+                m = re.search(r'(\d+(?:\.\d+)?)\s*kvp', nom_fichier, re.IGNORECASE)
+                label = f"{m.group(1)} kVp" if m else nom_fichier
+                try:
+                    E_spec, I_spec, mode_spec = charger_spectre_fichier(chemin)
+                    _, ep_mm = epaisseur_composite_equivalente_plomb(
+                        E_spec, I_spec, mode_spec, w_frac, nom_charge, nom_matrice
+                    )
+                except Exception:
+                    ep_mm = np.nan
+                labels.append(label)
+                epaisseurs.append(ep_mm)
+
+            # Tri par kVp si tous les labels sont numeriques
+            try:
+                ordre = sorted(range(len(labels)), key=lambda i: float(labels[i].split()[0]))
+                labels = [labels[i] for i in ordre]
+                epaisseurs = [epaisseurs[i] for i in ordre]
+            except Exception:
+                pass
+
+            x_pos = np.arange(len(labels))
+            ax.bar(x_pos, epaisseurs, color="tab:blue")
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(labels, rotation=45, ha="right")
+            ax.set_ylabel("Épaisseur composite équivalente à 0,5 mm Pb (mm)")
+            ax.set_title(f"Équivalence plomb - {len(labels)} spectres "
+                         f"({nom_charge} = {w_frac*100:.1f} %, matrice {nom_matrice})")
+            for xi, ep in zip(x_pos, epaisseurs):
+                if np.isfinite(ep):
+                    ax.annotate(f"{ep:.3f}", (xi, ep), textcoords="offset points",
+                                xytext=(0, 4), ha="center", fontsize=8)
+            resultat = (labels, epaisseurs)
+        else:
+            # ---------------- Mode vs fraction (source unique) ----------
+            w_pct_range = np.linspace(1.0, 100.0, 40)  # on evite 0% (matrice pure)
+            epaisseurs = []
+            for w_pct in w_pct_range:
+                try:
+                    _, ep_mm = epaisseur_composite_equivalente_plomb(
+                        E_array, I_array, mode, w_pct / 100, nom_charge, nom_matrice
+                    )
+                except Exception:
+                    ep_mm = np.nan
+                epaisseurs.append(ep_mm)
+            epaisseurs = np.array(epaisseurs)
+
+            try:
+                _, ep_actuelle_mm = epaisseur_composite_equivalente_plomb(
+                    E_array, I_array, mode, w_frac, nom_charge, nom_matrice
+                )
+            except Exception:
+                ep_actuelle_mm = None
+
+            ax.plot(w_pct_range, epaisseurs, 'o-', color="tab:blue", linewidth=2, markersize=3)
+            if ep_actuelle_mm is not None and np.isfinite(ep_actuelle_mm):
+                ax.axvline(w_frac * 100, color="tab:red", linestyle="--", linewidth=0.8,
+                           label=f"{w_frac*100:.1f} % -> {ep_actuelle_mm:.4f} mm")
+                ax.legend()
+            ax.set_xlabel(f"Fraction massique {nom_charge} (%)")
+            ax.set_ylabel("Épaisseur composite équivalente à 0,5 mm Pb (mm)")
+            ax.set_title(f"Équivalence plomb (0,5 mm) - source : {self.combo_source.currentText()}")
+            resultat = (w_pct_range, epaisseurs)
+
         ax.grid(True, alpha=0.3)
         c.draw()
+        return resultat
     # ------------------------------------------------------------------
     #  EXPORT DES RESULTATS
     # ------------------------------------------------------------------
