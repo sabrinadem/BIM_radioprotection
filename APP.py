@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QGroupBox, QComboBox, QDoubleSpinBox, QPushButton, QLabel, QLineEdit,
     QFileDialog, QTabWidget, QMessageBox, QSplitter, QStackedWidget, QFrame,
+    QProgressBar,
 )
 
 # --- Modules physiques ---------------------------------
@@ -198,6 +199,15 @@ class MainWindow(QMainWindow):
         self.bouton_calculer.clicked.connect(self._calculer)
         layout.addWidget(self.bouton_calculer)
 
+        # --- Barre de progression (visible seulement pendant le calcul) --
+        self.barre_progression = QProgressBar()
+        self.barre_progression.setRange(0, 100)
+        self.barre_progression.setValue(0)
+        self.barre_progression.setTextVisible(True)
+        self.barre_progression.setFormat("%p%")
+        self.barre_progression.setVisible(False)
+        layout.addWidget(self.barre_progression)
+
         self.bouton_exporter = QPushButton("Exporter les résultats...")
         self.bouton_exporter.setEnabled(False)  # active seulement apres un calcul reussi
         self.bouton_exporter.clicked.connect(self._exporter_resultats)
@@ -311,12 +321,26 @@ class MainWindow(QMainWindow):
                 raise ValueError("Veuillez selectionner un fichier de spectre (bouton Parcourir).")
             return charger_spectre_fichier(self.chemin_fichier_spectre)
 
+    # --- Aides pour la barre de progression ----------------------------
+    def _progression(self, valeur, message=None):
+        """Met à jour la barre de progression et force le rafraîchissement de l'UI."""
+        self.barre_progression.setValue(int(valeur))
+        if message:
+            self.statusBar().showMessage(message)
+        QApplication.processEvents()
+
     def _calculer(self):
         try:
+            self.bouton_calculer.setEnabled(False)
+            self.barre_progression.setVisible(True)
+            self._progression(0, "Chargement de la source...")
+
             E_array, I_array, mode = self._charger_source()
         except Exception as exc:
             QMessageBox.critical(self, "Erreur - source", f"Impossible de charger la source :\n{exc}")
             traceback.print_exc()
+            self.bouton_calculer.setEnabled(True)
+            self.barre_progression.setVisible(False)
             return
 
         w_frac = self.spin_fraction.value() / 100
@@ -327,20 +351,34 @@ class MainWindow(QMainWindow):
         pct_cible = self.spin_pct_cible.value()
 
         try:
+            self._progression(10, "Tracé du spectre incident...")
             self._tracer_spectre(E_array, I_array, mode)
+
+            self._progression(25, "Calcul : atténuation vs épaisseur...")
             x_mm, pct_vs_ep = self._tracer_vs_epaisseur(
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_max_mm, pct_cible)
+
+            self._progression(40, "Calcul : atténuation vs % charge...")
             w_pct_range, pct_vs_frac = self._tracer_vs_fraction(
                 E_array, I_array, mode, nom_charge, nom_matrice, ep_fixe_mm)
+
+            self._progression(55, "Calcul : μ/ρ du composite...")
             E_mu_rho, mu_rho_vals, mu_rho_matrice_vals, mu_rho_charge_vals = self._tracer_mu_rho_composite(
                 w_frac, nom_charge, nom_matrice)
+
+            self._progression(65, "Calcul : μ/ρ effectif vs épaisseur...")
             x_mm_eff, mu_rho_eff_vals = self._tracer_mu_rho_effectif(
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_max_mm)
+
+            self._progression(75, "Mise à jour des résultats numériques...")
             resultats_num = self._maj_resultats(
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_fixe_mm, pct_cible)
+
+            self._progression(85, "Calcul : atténuation vs énergie...")
             E_plot, pct_vs_energie = self._tracer_vs_energie(
                 mode, nom_charge, nom_matrice, w_frac, ep_fixe_mm)
-            
+
+            self._progression(95, "Calcul : équivalence plomb...")
             # --- Nouvel appel pour le graphique d'équivalence Plomb ---
             self._tracer_equivalence_kvp(E_array, I_array, mode, w_frac, nom_charge, nom_matrice)
 
@@ -370,12 +408,17 @@ class MainWindow(QMainWindow):
             }
             self.bouton_exporter.setEnabled(True)
 
+            self._progression(100, "Calcul terminé.")
             self.statusBar().showMessage(
                 f"Calcul terminé - source : {self.combo_source.currentText()}, "
                 f"composite : {nom_charge}/{nom_matrice}, mode : {mode}, {len(E_array)} points/raies.")
         except Exception as exc:
             QMessageBox.critical(self, "Erreur - calcul", f"Une erreur est survenue pendant le calcul :\n{exc}")
             traceback.print_exc()
+        finally:
+            self.bouton_calculer.setEnabled(True)
+            self.barre_progression.setVisible(False)
+            self.barre_progression.setValue(0)
 
     # --- Graphique 1 : spectre incident ------------------------------
     def _tracer_spectre(self, E_array, I_array, mode):
