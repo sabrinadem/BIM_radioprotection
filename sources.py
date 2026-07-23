@@ -60,9 +60,9 @@ def spectre_Pd103mono():
     return E[idx], I[idx], "discret"
 
 I125_lignes = [
-     (27.4, ...),
-     (31.0, ...),
-     (35.5, ...),
+     (27.4, 80.7),
+     (31.0, 9.65),
+     (35.5, 9.65),
  ]
 
 def spectre_I125():

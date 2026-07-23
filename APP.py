@@ -12,7 +12,6 @@ import traceback
 from datetime import datetime
 
 from matplotlib.ticker import MultipleLocator
-from matplotlib.ticker import MultipleLocator
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -27,7 +26,10 @@ from PyQt5.QtWidgets import (
 
 # --- Modules physiques ---------------------------------
 from sources import spectre_Pd103, spectre_Pd103mono, spectre_I125, charger_spectre_fichier
-from composite_physics import densite_composite, mu_rho_composite, mu_rho_charge, mu_rho_matrice, CHARGES, MATRICES
+from composite_physics import (
+    densite_composite, mu_rho_composite, mu_rho_charge, mu_rho_matrice, CHARGES, MATRICES,
+    mu_rho_composite_vs_spectre, LAC_composite,
+)
 from attenuation import (
     pourcentage_attenuation,
     epaisseur_pour_blocage,
@@ -137,11 +139,11 @@ class MainWindow(QMainWindow):
         form_composite = QFormLayout()
 
         self.combo_charge = QComboBox()
-        self.combo_charge.addItems(["Bi2O3", "W", "Pb"])  
+        self.combo_charge.addItems(["Bi2O3", "W", "Pb"])
         form_composite.addRow("Charge (element lourd) :", self.combo_charge)
 
         self.combo_matrice = QComboBox()
-        self.combo_matrice.addItems(["PEEK", "TPU", "PLA", "PETG"])  
+        self.combo_matrice.addItems(["PEEK", "TPU", "PLA", "PETG"])
         form_composite.addRow("Matrice (polymere) :", self.combo_matrice)
 
         self.spin_fraction = QDoubleSpinBox()
@@ -242,6 +244,10 @@ class MainWindow(QMainWindow):
 
         self.canvas_mu_rho = MplCanvas(figsize=(7, 5))
         self.onglets.addTab(self._wrap_canvas(self.canvas_mu_rho), "μ/ρ composite et elements purs vs énergie")
+
+        self.canvas_mu_rho_vs_spectre = MplCanvas(figsize=(7, 5))
+        self.onglets.addTab(self._wrap_canvas(self.canvas_mu_rho_vs_spectre),
+                             "μ/ρ composite aux énergies de la source")
 
         self.canvas_mu_rho_eff = MplCanvas(figsize=(7, 5))
         self.onglets.addTab(self._wrap_canvas(self.canvas_mu_rho_eff), "μ/ρ effectif vs épaisseur")
@@ -354,27 +360,31 @@ class MainWindow(QMainWindow):
             self._progression(10, "Tracé du spectre incident...")
             self._tracer_spectre(E_array, I_array, mode)
 
-            self._progression(25, "Calcul : atténuation vs épaisseur...")
+            self._progression(22, "Calcul : atténuation vs épaisseur...")
             x_mm, pct_vs_ep = self._tracer_vs_epaisseur(
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_max_mm, pct_cible)
 
-            self._progression(40, "Calcul : atténuation vs % charge...")
+            self._progression(35, "Calcul : atténuation vs % charge...")
             w_pct_range, pct_vs_frac = self._tracer_vs_fraction(
                 E_array, I_array, mode, nom_charge, nom_matrice, ep_fixe_mm)
 
-            self._progression(55, "Calcul : μ/ρ du composite...")
+            self._progression(48, "Calcul : μ/ρ du composite...")
             E_mu_rho, mu_rho_vals, mu_rho_matrice_vals, mu_rho_charge_vals = self._tracer_mu_rho_composite(
                 w_frac, nom_charge, nom_matrice)
 
-            self._progression(65, "Calcul : μ/ρ effectif vs épaisseur...")
+            self._progression(58, "Calcul : μ/ρ composite aux énergies de la source...")
+            mu_rho_vals_source = self._tracer_mu_rho_vs_spectre(
+                E_array, mode, w_frac, nom_charge, nom_matrice)
+
+            self._progression(68, "Calcul : μ/ρ effectif vs épaisseur...")
             x_mm_eff, mu_rho_eff_vals = self._tracer_mu_rho_effectif(
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_max_mm)
 
-            self._progression(75, "Mise à jour des résultats numériques...")
+            self._progression(78, "Mise à jour des résultats numériques...")
             resultats_num = self._maj_resultats(
                 E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_fixe_mm, pct_cible)
 
-            self._progression(85, "Calcul : atténuation vs énergie...")
+            self._progression(88, "Calcul : atténuation vs énergie...")
             E_plot, pct_vs_energie = self._tracer_vs_energie(
                 mode, nom_charge, nom_matrice, w_frac, ep_fixe_mm)
 
@@ -402,6 +412,7 @@ class MainWindow(QMainWindow):
                 "mu_rho_composite": mu_rho_vals,
                 "mu_rho_matrice": mu_rho_matrice_vals,
                 "mu_rho_charge": mu_rho_charge_vals,
+                "mu_rho_vs_spectre": mu_rho_vals_source,
                 "x_mm_mu_rho_eff": x_mm_eff,
                 "mu_rho_effectif": mu_rho_eff_vals,
                 "resultats_num": resultats_num,
@@ -429,7 +440,16 @@ class MainWindow(QMainWindow):
             ax.plot(E_array, I_array, color="tab:blue")
             ax.fill_between(E_array, I_array, alpha=0.2, color="tab:blue")
         else:
-            ax.stem(E_array, I_array, basefmt=" ")
+            # NOTE : on n'utilise plus ax.stem() ici. Avec certaines
+            # combinaisons recentes de versions matplotlib/numpy, ax.stem()
+            # plante (TypeError: float() argument ... not 'ellipsis') des
+            # que la ligne de base ("basefmt") est masquee (basefmt=" ").
+            # On reproduit le meme rendu visuel (raies verticales + marqueurs)
+            # a la main avec vlines + plot, ce qui est equivalent et stable.
+            E_arr = np.asarray(E_array, dtype=float)
+            I_arr = np.asarray(I_array, dtype=float)
+            ax.vlines(E_arr, 0, I_arr, color="tab:blue", linewidth=1.5)
+            ax.plot(E_arr, I_arr, 'o', color="tab:blue", markersize=5)
         ax.set_xlabel("Énergie (keV)")
         ax.set_ylabel("Intensité")
         ax.set_title(f"Spectre incident ({mode})")
@@ -539,6 +559,47 @@ class MainWindow(QMainWindow):
         c.draw()
         return E_plot, mu_rho_vals, mu_rho_matrice_vals, mu_rho_charge_vals
 
+    # --- Graphique bonus : mu/rho du composite aux energies EXACTES de la source --
+    def _tracer_mu_rho_vs_spectre(self, E_array, mode, w_frac, nom_charge, nom_matrice):
+        """
+        Contrairement au graphique 4 (axe continu arbitraire 4-60 keV), ce
+        graphique evalue mu/rho du composite UNIQUEMENT aux energies
+        reellement emises par la source active (raies discretes de
+        Pd-103/I-125, ou spectre continu complet d'un fichier SpekCalc).
+        Utile pour voir immediatement si une raie de la source tombe pres
+        d'un seuil d'absorption (K/L) du composite.
+        """
+        mu_rho_vals = mu_rho_composite_vs_spectre(
+            E_array, w_frac, nom_charge=nom_charge, nom_matrice=nom_matrice)
+
+        nom_charge_aff = CHARGES[nom_charge]["nom_affiche"]
+
+        c = self.canvas_mu_rho_vs_spectre
+        c.clear()
+        ax = c.axes
+
+        if mode == "continu":
+            ax.plot(E_array, mu_rho_vals, color="tab:orange", linewidth=1.5)
+        else:
+            # raies discretes : vlines + marqueurs (meme logique que _tracer_spectre,
+            # on evite ax.stem() pour les memes raisons de compatibilite matplotlib/numpy)
+            E_arr = np.asarray(E_array, dtype=float)
+            mu_rho_arr = np.asarray(mu_rho_vals, dtype=float)
+            ax.vlines(E_arr, 0, mu_rho_arr, color="tab:orange", linewidth=1.5)
+            ax.plot(E_arr, mu_rho_arr, 'o', color="tab:orange", markersize=6)
+            for E, mr in zip(E_arr, mu_rho_arr):
+                ax.annotate(f"{mr:.3g}", (E, mr), textcoords="offset points",
+                            xytext=(0, 6), ha="center", fontsize=8)
+
+        ax.set_yscale("log")
+        ax.set_xlabel("Énergie (keV)")
+        ax.set_ylabel(r"$\mu/\rho$ composite (cm$^2$/g)")
+        ax.set_title(f"μ/ρ composite ({w_frac*100:.1f} % {nom_charge_aff}) "
+                     f"aux énergies de la source ({mode})")
+        ax.grid(True, which="both", alpha=0.3)
+        c.draw()
+        return mu_rho_vals
+
     # --- Graphique 5 : mu/rho effectif vs epaisseur --------------------
     def _tracer_mu_rho_effectif(self, E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_max_mm):
         x_mm = np.linspace(ep_max_mm / 150, ep_max_mm, 150)
@@ -560,20 +621,22 @@ class MainWindow(QMainWindow):
         c.draw()
         return x_mm, mu_rho_eff_vals
 
-
 # --- Graphique 6 : % attenuation vs énergie -------------------------
     def _tracer_vs_energie(self, mode, nom_charge, nom_matrice, w_frac, ep_fixe_mm):
-        E_plot = np.linspace(4, 60, 400)
+        E_plot = np.linspace(4, 150, 400)
         x_cm = ep_fixe_mm / 10
 
         nom_charge_aff = CHARGES[nom_charge]["nom_affiche"]
         nom_matrice_aff = MATRICES[nom_matrice]["nom_affiche"]
 
-        pct = np.array([
-            pourcentage_attenuation(np.array([E]), np.array([1.0]), mode, w_frac, x_cm,
-                                     nom_charge=nom_charge, nom_matrice=nom_matrice)[0]
+        # Beer-Lambert direct, faisceau hypothetique monoenergetique a
+        # chaque E -> ne depend PAS du mode (continu/discret) de la source
+        # reellement chargee, donc plus de bug d'integration a 1 point.
+        mu_E = np.array([
+            LAC_composite(E, w_frac, nom_charge=nom_charge, nom_matrice=nom_matrice)
             for E in E_plot
         ])
+        pct = (1 - np.exp(-mu_E * x_cm)) * 100
 
         c = self.canvas_vs_energie
         c.clear()
@@ -582,10 +645,10 @@ class MainWindow(QMainWindow):
                 label=f"Composite ({w_frac*100:.1f} % {nom_charge_aff})")
 
         if nom_charge == "Bi2O3":
-            for seuil in (13.4186, 15.7111, 16.3875):
+            for seuil in (13.4186, 15.7111, 16.3875, 90.5259):
                 ax.axvline(seuil, color="gray", linestyle=":", linewidth=0.8)
         elif nom_charge == "W":
-            for seuil in (10.207, 11.544, 12.100):
+            for seuil in (10.207, 11.544, 12.100, 69.525):
                 ax.axvline(seuil, color="gray", linestyle=":", linewidth=0.8)
 
         ax.set_xlabel("Énergie (keV)")
@@ -593,13 +656,12 @@ class MainWindow(QMainWindow):
         ax.set_title(f"Atténuation vs énergie ({w_frac*100:.1f} % {nom_charge_aff}, "
                      f"épaisseur = {ep_fixe_mm:.3f} mm)")
         ax.legend()
-        ax.xaxis.set_major_locator(MultipleLocator(5.0))
+        ax.xaxis.set_major_locator(MultipleLocator(10.0))
         ax.yaxis.set_major_locator(MultipleLocator(10.0))
         ax.set_ylim(0, 105)
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
         c.draw()
         return E_plot, pct
-
 
     # --- Panneau de resultats numeriques -------------------------------
     def _maj_resultats(self, E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_fixe_mm, pct_cible):
@@ -736,6 +798,7 @@ class MainWindow(QMainWindow):
         ax.grid(True, alpha=0.3)
         c.draw()
         return resultat
+
     # ------------------------------------------------------------------
     #  EXPORT DES RESULTATS
     # ------------------------------------------------------------------
@@ -805,6 +868,12 @@ class MainWindow(QMainWindow):
                             f"mu_rho_{d['nom_matrice']}_cm2_g", f"mu_rho_{d['nom_charge']}_pur_cm2_g"])
                 w.writerows(zip(d["E_mu_rho"], d["mu_rho_composite"], d["mu_rho_matrice"], d["mu_rho_charge"]))
 
+            # 2bis) mu/rho composite aux energies EXACTES de la source ------
+            with open(os.path.join(sous_dossier, "mu_rho_composite_vs_spectre_source.csv"), "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["Énergie_keV", "Intensité_source", "mu_rho_composite_cm2_g"])
+                w.writerows(zip(d["E_array"], d["I_array"], d["mu_rho_vs_spectre"]))
+
             with open(os.path.join(sous_dossier, "mu_rho_effectif_vs_epaisseur.csv"), "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
                 w.writerow(["Épaisseur_mm", "mu_rho_effectif_cm2_g"])
@@ -815,21 +884,21 @@ class MainWindow(QMainWindow):
             self.canvas_vs_epaisseur.fig.savefig(os.path.join(sous_dossier, "graphique_vs_epaisseur.png"), dpi=200)
             self.canvas_vs_fraction.fig.savefig(os.path.join(sous_dossier, "graphique_vs_fraction.png"), dpi=200)
             self.canvas_mu_rho.fig.savefig(os.path.join(sous_dossier, "graphique_mu_rho_composite.png"), dpi=200)
+            self.canvas_mu_rho_vs_spectre.fig.savefig(
+                os.path.join(sous_dossier, "graphique_mu_rho_vs_spectre_source.png"), dpi=200)
             self.canvas_mu_rho_eff.fig.savefig(os.path.join(sous_dossier, "graphique_mu_rho_effectif.png"), dpi=200)
             self.canvas_vs_energie.fig.savefig(os.path.join(sous_dossier, "graphique_vs_energie.png"), dpi=200)
 
             QMessageBox.information(
                 self, "Export reussi",
                 f"Résultats exportés avec succès dans :\n{sous_dossier}\n\n"
-                "Contenu : resume.txt, 5 fichiers CSV et 5 graphiques PNG."
+                "Contenu : resume.txt, 6 fichiers CSV et 6 graphiques PNG."
             )
             self.statusBar().showMessage(f"Exporté dans : {sous_dossier}")
 
         except Exception as exc:
             QMessageBox.critical(self, "Erreur - export", f"Impossible d'exporter les résultats :\n{exc}")
             traceback.print_exc()
-
-
 
 
 def main():
