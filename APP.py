@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
         elif choix == "Pd-103mono":
             return spectre_Pd103mono()
         elif choix == "I-125":
-            return spectre_I125()
+            return spectre_I125mono()
         else:
             if not self.chemin_fichier_spectre:
                 raise ValueError("Veuillez selectionner un fichier de spectre (bouton Parcourir).")
