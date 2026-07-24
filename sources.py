@@ -8,9 +8,6 @@ Module des SOURCES de rayonnement. Chaque fonction retourne :
 - I_array : intensites (u.a. pour continu, % par desintegration pour discret)
 - mode    : "continu"  -> spectre dense (ex: SpekCalc), integration = trapezes
             "discret"  -> raies isolees (ex: Pd-103), integration = somme ponderee
-
-C'est ce "mode" qui permettra plus tard, dans PyQt, de proposer un menu
-deroulant "type de source" sans dupliquer le moteur d'attenuation.
 """
 
 import numpy as np
@@ -31,7 +28,6 @@ def charger_spectre_fichier(chemin_fichier):
 # Sources DISCRETES (radio-isotopes de curietherapie)
 # ---------------------------------------------------------------------
 
-# (!) A RE-VERIFIER sur NNDC/ENSDF (nndc.bnl.gov/nudat3) avant publication.
 # Seules les intensites RELATIVES comptent pour le calcul d'attenuation.
 Pd103_lignes = [
     (20.074, 14.1),   # Rh Kalpha2
@@ -42,7 +38,6 @@ Pd103_lignes = [
 ]
 
 def spectre_Pd103():
-    """Pd-103 : rayons X caracteristiques du Rh (capture electronique)."""
     E = np.array([e for e, _ in Pd103_lignes])
     I = np.array([i for _, i in Pd103_lignes])
     idx = np.argsort(E)
@@ -59,15 +54,13 @@ def spectre_Pd103mono():
     idx = np.argsort(E)
     return E[idx], I[idx], "discret"
 
-I125_lignes = [
-     (27.4, 80.7),
-     (31.0, 9.65),
-     (35.5, 9.65),
+I125mono_lignes = [
+     (28, 100),
  ]
 
-def spectre_I125():
-     E = np.array([e for e, _ in I125_lignes])
-     I = np.array([i for _, i in I125_lignes])
+def spectre_I125mono():
+     E = np.array([e for e, _ in I125mono_lignes])
+     I = np.array([i for _, i in I125mono_lignes])
      idx = np.argsort(E)
      return E[idx], I[idx], "discret"
 
@@ -75,6 +68,5 @@ def spectre_I125():
 SOURCES_DISPONIBLES = {
     "Pd-103": spectre_Pd103,
     "Pd-103mono": spectre_Pd103mono,
-    "I-125": spectre_I125,
-    # "Fichier SpekCalc": charger_spectre_fichier,  # necessite un argument, gere a part
+    "I-125mono": spectre_I125mono,
 }

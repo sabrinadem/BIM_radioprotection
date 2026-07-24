@@ -1,7 +1,7 @@
 """
 attenuation.py
 ==============
-Moteur GENERIQUE d'attenuation spectrale. Fonctionne pour n'importe quelle
+Attenuation spectrale. Fonctionne pour n'importe quelle
 source (continue ou discrete) : c'est la meme physique (Beer-Lambert a
 chaque energie), seule l'INTEGRATION du flux change selon le mode.
 
@@ -29,7 +29,7 @@ def _flux_integre(E_array, I_array, mode):
 def spectre_transmis(E_array, I_array, w_frac_charge, epaisseur_cm,
                       nom_charge="Bi2O3", nom_matrice="PEEK"):
     """
-    Beer-Lambert applique a CHAQUE energie du spectre (continu ou discret) :
+    Beer-Lambert applique a chaque energie du spectre (continu ou discret) :
     I_transmis(E) = I_incident(E) * exp(-mu(E) * x)
     """
     mu_E = np.array([
@@ -105,8 +105,6 @@ idx = np.argsort(E_array)
 
 kvp40 = epaisseur_composite_equivalente_plomb(E_array, I_array, "continu", 0.80, "W", "TPU")
 """
-
-
 
 
 # =====================================================================
@@ -251,10 +249,7 @@ def graphique_mu_rho_effectif(E_array, I_array, mode, w_frac_charge,
                                epaisseur_max_cm=1.0, n_points=150,
                                nom_charge="Bi2O3", nom_matrice="PEEK"):
     """
-    Trace (mu/rho)_eff en fonction de l'epaisseur, pour VERIFIER visuellement
-    s'il reste constant (source monoenergetique) ou s'il varie legerement
-    (beam hardening, source polyenergetique). Voir docstring de
-    mu_rho_effectif() pour l'explication physique.
+    Trace (mu/rho)_eff en fonction de l'epaisseur
     """
     import matplotlib.pyplot as plt
     x_range_cm = np.linspace(epaisseur_max_cm / n_points, epaisseur_max_cm, n_points)

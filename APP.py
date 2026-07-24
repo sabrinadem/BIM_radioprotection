@@ -2,7 +2,6 @@
 APP.py
 ===========
 Interface graphique PyQt5 pour le calcul d'attenuation de composite, quelle que soit la source de rayonnement.
-
 """
 
 import sys
@@ -21,11 +20,11 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QGroupBox, QComboBox, QDoubleSpinBox, QPushButton, QLabel, QLineEdit,
     QFileDialog, QTabWidget, QMessageBox, QSplitter, QStackedWidget, QFrame,
-    QProgressBar,
+    QProgressBar, QInputDialog
 )
 
 # --- Modules physiques ---------------------------------
-from sources import spectre_Pd103, spectre_Pd103mono, spectre_I125, charger_spectre_fichier
+from sources import spectre_Pd103, spectre_Pd103mono, spectre_I125mono, charger_spectre_fichier
 from composite_physics import (
     densite_composite, mu_rho_composite, mu_rho_charge, mu_rho_matrice, CHARGES, MATRICES,
     mu_rho_composite_vs_spectre, LAC_composite,
@@ -59,8 +58,8 @@ class MplCanvas(FigureCanvas):
 #  Fenetre principale
 # =========================================================================
 class MainWindow(QMainWindow):
-
-    SOURCES_CONNUES = ["Pd-103", "Pd-103mono", "I-125", "Fichier spectre (SpekCalc, .spec)"]
+ # important de rajouter les nouvelles sources dans la liste suivante après les avoir mis dans sources.py
+    SOURCES_CONNUES = ["Pd-103", "Pd-103mono", "I-125mono", "Fichier spectre (SpekCalc, .spec)"]
 
     def __init__(self):
         super().__init__()
@@ -139,7 +138,7 @@ class MainWindow(QMainWindow):
         form_composite = QFormLayout()
 
         self.combo_charge = QComboBox()
-        self.combo_charge.addItems(["Bi2O3", "W", "Pb"])
+        self.combo_charge.addItems(["Au", "BaSO4", "Ba", "Bi2O3", "Bi", "Pb", "Pt", "Ta", "Ti", "W"])
         form_composite.addRow("Charge (element lourd) :", self.combo_charge)
 
         self.combo_matrice = QComboBox()
@@ -498,7 +497,7 @@ class MainWindow(QMainWindow):
 
     # --- Graphique 3 : % attenuation vs % massique de la charge --------
     def _tracer_vs_fraction(self, E_array, I_array, mode, nom_charge, nom_matrice, ep_fixe_mm):
-        w_pct_range = np.linspace(0.0, 100.0, 200)
+        w_pct_range = np.linspace(0.0, 100.0, 600)       
         x_cm = ep_fixe_mm / 10
         pct = np.array([
             pourcentage_attenuation(E_array, I_array, mode, w / 100, x_cm,
@@ -526,7 +525,7 @@ class MainWindow(QMainWindow):
 
     # --- Graphique 4 : mu/rho du composite, matrice pure et charge pure vs energie --
     def _tracer_mu_rho_composite(self, w_frac, nom_charge, nom_matrice):
-        E_plot = np.linspace(4, 60, 400)
+        E_plot = np.linspace(4, 60, 1000)
         mu_rho_vals = np.array([
             mu_rho_composite(E, w_frac, nom_charge=nom_charge, nom_matrice=nom_matrice) for E in E_plot
         ])
@@ -559,7 +558,7 @@ class MainWindow(QMainWindow):
         c.draw()
         return E_plot, mu_rho_vals, mu_rho_matrice_vals, mu_rho_charge_vals
 
-    # --- Graphique bonus : mu/rho du composite aux energies EXACTES de la source --
+    # ---  mu/rho du composite aux energies EXACTES de la source --
     def _tracer_mu_rho_vs_spectre(self, E_array, mode, w_frac, nom_charge, nom_matrice):
         """
         Contrairement au graphique 4 (axe continu arbitraire 4-60 keV), ce
@@ -602,7 +601,7 @@ class MainWindow(QMainWindow):
 
     # --- Graphique 5 : mu/rho effectif vs epaisseur --------------------
     def _tracer_mu_rho_effectif(self, E_array, I_array, mode, w_frac, nom_charge, nom_matrice, ep_max_mm):
-        x_mm = np.linspace(ep_max_mm / 150, ep_max_mm, 150)
+        x_mm = np.linspace(ep_max_mm / 400, ep_max_mm, 400)
         x_cm = x_mm / 10
         mu_rho_eff_vals = np.array([
             mu_rho_effectif(E_array, I_array, mode, w_frac, x,
@@ -623,7 +622,7 @@ class MainWindow(QMainWindow):
 
 # --- Graphique 6 : % attenuation vs énergie -------------------------
     def _tracer_vs_energie(self, mode, nom_charge, nom_matrice, w_frac, ep_fixe_mm):
-        E_plot = np.linspace(4, 150, 400)
+        E_plot = np.linspace(4, 150, 1000)
         x_cm = ep_fixe_mm / 10
 
         nom_charge_aff = CHARGES[nom_charge]["nom_affiche"]
@@ -766,7 +765,7 @@ class MainWindow(QMainWindow):
             resultat = (labels, epaisseurs)
         else:
             # ---------------- Mode vs fraction (source unique) ----------
-            w_pct_range = np.linspace(1.0, 100.0, 40)  # on evite 0% (matrice pure)
+            w_pct_range = np.linspace(1.0, 100.0, 150)  # on evite 0% (matrice pure)
             epaisseurs = []
             for w_pct in w_pct_range:
                 try:
@@ -803,102 +802,123 @@ class MainWindow(QMainWindow):
     #  EXPORT DES RESULTATS
     # ------------------------------------------------------------------
     def _exporter_resultats(self):
-        if not self.dernier_calcul:
-            QMessageBox.warning(self, "Rien à exporter", "Veuillez d'abord cliquer sur Calculer.")
-            return
+            if not self.dernier_calcul:
+                QMessageBox.warning(self, "Rien à exporter", "Veuillez d'abord cliquer sur Calculer.")
+                return
 
-        dossier = QFileDialog.getExistingDirectory(self, "Choisir un dossier de destination")
-        if not dossier:
-            return
+            dossier = QFileDialog.getExistingDirectory(self, "Choisir un dossier de destination")
+            if not dossier:
+                return
 
-        d = self.dernier_calcul
-        horodatage = datetime.now().strftime("%Y%m%d_%H%M%S")
-        sous_dossier = os.path.join(dossier, f"resultats_attenuation_{horodatage}")
+            # --- Demande du nom du fichier/dossier d'export ---
+            horodatage = datetime.now().strftime("%Y%m%d_%H%M%S")
+            nom_defaut = f"resultats_attenuation_{horodatage}"
 
-        try:
-            os.makedirs(sous_dossier, exist_ok=True)
-
-            # 1) Resume texte des parametres et resultats -----------------
-            chemin_resume = os.path.join(sous_dossier, "resume.txt")
-            with open(chemin_resume, "w", encoding="utf-8") as f:
-                f.write("Résumé du calcul d'atténuation - composite\n")
-                f.write(f"Date : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write("=" * 60 + "\n\n")
-                f.write("--- Paramètres ---\n")
-                f.write(f"Source                         : {d['source']}\n")
-                f.write(f"Mode                           : {d['mode']}\n")
-                f.write(f"Charge                         : {d['nom_charge']}\n")
-                f.write(f"Matrice                        : {d['nom_matrice']}\n")
-                f.write(f"Fraction massique charge       : {d['w_frac_pct']:.2f} %\n")
-                f.write(f"Épaisseur max (graph. 1)       : {d['ep_max_mm']:.3f} mm\n")
-                f.write(f"Épaisseur fixe (graph. 2)      : {d['ep_fixe_mm']:.3f} mm\n")
-                f.write(f"% atténuation cible            : {d['pct_cible']:.3f} %\n\n")
-                f.write("--- Résultats ---\n")
-                r = d["resultats_num"]
-                f.write(f"Flux incident intégré          : {r['flux_incident']:.6g}\n")
-                f.write(f"Flux transmis (ép. fixe)       : {r['flux_transmis']:.6g}\n")
-                f.write(f"% atténuation (ép. fixe)       : {r['pct_attenuation_epaisseur_fixe']:.4f} %\n")
-                if r["epaisseur_solution_mm"] is not None:
-                    f.write(f"Épaisseur pour % cible         : {r['epaisseur_solution_mm']:.4f} mm\n")
-                else:
-                    f.write("Épaisseur pour % cible         : pas de solution dans l'intervalle testée\n")
-                f.write(f"μ effectif (ép. fixe)          : {r['mu_effectif']:.6g} cm-1\n")
-                f.write(f"μ/ρ effectif (ép. fixe)        : {r['mu_rho_effectif']:.6g} cm2/g\n")
-                f.write(f"ρ composite                    : {r['rho_composite']:.4f} g/cm3\n")
-
-            # 2) Donnees brutes en CSV -------------------------------------
-            with open(os.path.join(sous_dossier, "spectre_source.csv"), "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(["Énergie_keV", "Intensité"])
-                w.writerows(zip(d["E_array"], d["I_array"]))
-
-            with open(os.path.join(sous_dossier, "attenuation_vs_epaisseur.csv"), "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(["Épaisseur_mm", "Pourcentage_atténuation"])
-                w.writerows(zip(d["x_mm"], d["pct_vs_epaisseur"]))
-
-            with open(os.path.join(sous_dossier, f"attenuation_vs_fraction_{d['nom_charge']}.csv"), "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow([f"Fraction_massique_{d['nom_charge']}_pct", "Pourcentage_atténuation"])
-                w.writerows(zip(d["w_pct_range"], d["pct_vs_fraction"]))
-
-            with open(os.path.join(sous_dossier, "mu_rho_composite_vs_energie.csv"), "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(["Énergie_keV", "mu_rho_composite_cm2_g",
-                            f"mu_rho_{d['nom_matrice']}_cm2_g", f"mu_rho_{d['nom_charge']}_pur_cm2_g"])
-                w.writerows(zip(d["E_mu_rho"], d["mu_rho_composite"], d["mu_rho_matrice"], d["mu_rho_charge"]))
-
-            # 2bis) mu/rho composite aux energies EXACTES de la source ------
-            with open(os.path.join(sous_dossier, "mu_rho_composite_vs_spectre_source.csv"), "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(["Énergie_keV", "Intensité_source", "mu_rho_composite_cm2_g"])
-                w.writerows(zip(d["E_array"], d["I_array"], d["mu_rho_vs_spectre"]))
-
-            with open(os.path.join(sous_dossier, "mu_rho_effectif_vs_epaisseur.csv"), "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(["Épaisseur_mm", "mu_rho_effectif_cm2_g"])
-                w.writerows(zip(d["x_mm_mu_rho_eff"], d["mu_rho_effectif"]))
-
-            # 3) Graphiques en PNG (haute resolution) ----------------------
-            self.canvas_spectre.fig.savefig(os.path.join(sous_dossier, "graphique_spectre.png"), dpi=200)
-            self.canvas_vs_epaisseur.fig.savefig(os.path.join(sous_dossier, "graphique_vs_epaisseur.png"), dpi=200)
-            self.canvas_vs_fraction.fig.savefig(os.path.join(sous_dossier, "graphique_vs_fraction.png"), dpi=200)
-            self.canvas_mu_rho.fig.savefig(os.path.join(sous_dossier, "graphique_mu_rho_composite.png"), dpi=200)
-            self.canvas_mu_rho_vs_spectre.fig.savefig(
-                os.path.join(sous_dossier, "graphique_mu_rho_vs_spectre_source.png"), dpi=200)
-            self.canvas_mu_rho_eff.fig.savefig(os.path.join(sous_dossier, "graphique_mu_rho_effectif.png"), dpi=200)
-            self.canvas_vs_energie.fig.savefig(os.path.join(sous_dossier, "graphique_vs_energie.png"), dpi=200)
-
-            QMessageBox.information(
-                self, "Export reussi",
-                f"Résultats exportés avec succès dans :\n{sous_dossier}\n\n"
-                "Contenu : resume.txt, 6 fichiers CSV et 6 graphiques PNG."
+            nom_saisi, ok = QInputDialog.getText(
+                self,
+                "Nom de l'export",
+                "Nom du dossier de résultats :",
+                text=nom_defaut
             )
-            self.statusBar().showMessage(f"Exporté dans : {sous_dossier}")
+            if not ok:
+                return  # l'utilisateur a annulé
 
-        except Exception as exc:
-            QMessageBox.critical(self, "Erreur - export", f"Impossible d'exporter les résultats :\n{exc}")
-            traceback.print_exc()
+            nom_saisi = nom_saisi.strip()
+            if not nom_saisi:
+                nom_saisi = nom_defaut
+
+            # Nettoyage du nom pour éviter les caractères invalides dans un chemin
+            caracteres_invalides = '<>:"/\\|?*'
+            for c in caracteres_invalides:
+                nom_saisi = nom_saisi.replace(c, "_")
+
+            d = self.dernier_calcul
+            sous_dossier = os.path.join(dossier, nom_saisi)
+
+            try:
+                os.makedirs(sous_dossier, exist_ok=True)
+
+                # 1) Resume texte des parametres et resultats -----------------
+                chemin_resume = os.path.join(sous_dossier, "resume.txt")
+                with open(chemin_resume, "w", encoding="utf-8") as f:
+                    f.write("Résumé du calcul d'atténuation - composite\n")
+                    f.write(f"Date : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write("=" * 60 + "\n\n")
+                    f.write("--- Paramètres ---\n")
+                    f.write(f"Source                         : {d['source']}\n")
+                    f.write(f"Mode                           : {d['mode']}\n")
+                    f.write(f"Charge                         : {d['nom_charge']}\n")
+                    f.write(f"Matrice                        : {d['nom_matrice']}\n")
+                    f.write(f"Fraction massique charge       : {d['w_frac_pct']:.2f} %\n")
+                    f.write(f"Épaisseur max (graph. 1)       : {d['ep_max_mm']:.3f} mm\n")
+                    f.write(f"Épaisseur fixe (graph. 2)      : {d['ep_fixe_mm']:.3f} mm\n")
+                    f.write(f"% atténuation cible            : {d['pct_cible']:.3f} %\n\n")
+                    f.write("--- Résultats ---\n")
+                    r = d["resultats_num"]
+                    f.write(f"Flux incident intégré          : {r['flux_incident']:.6g}\n")
+                    f.write(f"Flux transmis (ép. fixe)       : {r['flux_transmis']:.6g}\n")
+                    f.write(f"% atténuation (ép. fixe)       : {r['pct_attenuation_epaisseur_fixe']:.4f} %\n")
+                    if r["epaisseur_solution_mm"] is not None:
+                        f.write(f"Épaisseur pour % cible         : {r['epaisseur_solution_mm']:.4f} mm\n")
+                    else:
+                        f.write("Épaisseur pour % cible         : pas de solution dans l'intervalle testée\n")
+                    f.write(f"μ effectif (ép. fixe)          : {r['mu_effectif']:.6g} cm-1\n")
+                    f.write(f"μ/ρ effectif (ép. fixe)        : {r['mu_rho_effectif']:.6g} cm2/g\n")
+                    f.write(f"ρ composite                    : {r['rho_composite']:.4f} g/cm3\n")
+
+                # 2) Donnees brutes en CSV -------------------------------------
+                with open(os.path.join(sous_dossier, "spectre_source.csv"), "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow(["Énergie_keV", "Intensité"])
+                    w.writerows(zip(d["E_array"], d["I_array"]))
+
+                with open(os.path.join(sous_dossier, "attenuation_vs_epaisseur.csv"), "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow(["Épaisseur_mm", "Pourcentage_atténuation"])
+                    w.writerows(zip(d["x_mm"], d["pct_vs_epaisseur"]))
+
+                with open(os.path.join(sous_dossier, f"attenuation_vs_fraction_{d['nom_charge']}.csv"), "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow([f"Fraction_massique_{d['nom_charge']}_pct", "Pourcentage_atténuation"])
+                    w.writerows(zip(d["w_pct_range"], d["pct_vs_fraction"]))
+
+                with open(os.path.join(sous_dossier, "mu_rho_composite_vs_energie.csv"), "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow(["Énergie_keV", "mu_rho_composite_cm2_g",
+                                f"mu_rho_{d['nom_matrice']}_cm2_g", f"mu_rho_{d['nom_charge']}_pur_cm2_g"])
+                    w.writerows(zip(d["E_mu_rho"], d["mu_rho_composite"], d["mu_rho_matrice"], d["mu_rho_charge"]))
+
+                # 2bis) mu/rho composite aux energies EXACTES de la source ------
+                with open(os.path.join(sous_dossier, "mu_rho_composite_vs_spectre_source.csv"), "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow(["Énergie_keV", "Intensité_source", "mu_rho_composite_cm2_g"])
+                    w.writerows(zip(d["E_array"], d["I_array"], d["mu_rho_vs_spectre"]))
+
+                with open(os.path.join(sous_dossier, "mu_rho_effectif_vs_epaisseur.csv"), "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow(["Épaisseur_mm", "mu_rho_effectif_cm2_g"])
+                    w.writerows(zip(d["x_mm_mu_rho_eff"], d["mu_rho_effectif"]))
+
+                # 3) Graphiques en PNG (haute resolution) ----------------------
+                self.canvas_spectre.fig.savefig(os.path.join(sous_dossier, "graphique_spectre.png"), dpi=200)
+                self.canvas_vs_epaisseur.fig.savefig(os.path.join(sous_dossier, "graphique_vs_epaisseur.png"), dpi=200)
+                self.canvas_vs_fraction.fig.savefig(os.path.join(sous_dossier, "graphique_vs_fraction.png"), dpi=200)
+                self.canvas_mu_rho.fig.savefig(os.path.join(sous_dossier, "graphique_mu_rho_composite.png"), dpi=200)
+                self.canvas_mu_rho_vs_spectre.fig.savefig(
+                    os.path.join(sous_dossier, "graphique_mu_rho_vs_spectre_source.png"), dpi=200)
+                self.canvas_mu_rho_eff.fig.savefig(os.path.join(sous_dossier, "graphique_mu_rho_effectif.png"), dpi=200)
+                self.canvas_vs_energie.fig.savefig(os.path.join(sous_dossier, "graphique_vs_energie.png"), dpi=200)
+
+                QMessageBox.information(
+                    self, "Export reussi",
+                    f"Résultats exportés avec succès dans :\n{sous_dossier}\n\n"
+                    "Contenu : resume.txt, 6 fichiers CSV et 6 graphiques PNG."
+                )
+                self.statusBar().showMessage(f"Exporté dans : {sous_dossier}")
+
+            except Exception as exc:
+                QMessageBox.critical(self, "Erreur - export", f"Impossible d'exporter les résultats :\n{exc}")
+                traceback.print_exc()
 
 
 def main():

@@ -4,18 +4,16 @@ composite_physics.py
 Module COMMUN : tout ce qui concerne le MATERIAU (composite charge/matrice),
 independant de la source de rayonnement utilisee.
 
-Regroupe les etapes 1 a 4 de votre pipeline original :
+Regroupe les etapes:
   1. Donnees NIST mu/rho des elements
   2. Interpolation log-log
   3. Regle de melange (charge, matrice, composite)
   4. Densite et LAC du composite
 
-Ce module ne sait rien des spectres (fichier SpekCalc, Pd-103, etc.) :
-ca, c'est le role de sources.py
-
 ------------------------------------------------------------------------
-CHARGES DISPONIBLES : "Bi2O3" (oxyde de bismuth), "W" (tungstene pur), "Pb" (plomb pur)
-MATRICES DISPONIBLES : "PEEK", "TPU"
+CHARGES DISPONIBLES : "Bi2O3", "W", "Pb", "Ta", "Bi", "Au", "Ba", "BaSO4",
+                       "Pt", "Ti"
+MATRICES DISPONIBLES : "PEEK", "TPU", "PLA", "PETG"
 ------------------------------------------------------------------------
 """
 
@@ -24,13 +22,15 @@ import numpy as np
 # =====================================================================
 # 1. DONNEES NIST : mu/rho (cm2/g) vs Energie (keV)
 #    Source : https://physics.nist.gov/PhysRefData/XrayMassCoef/
+#    Toutes les tables ci-dessous couvrent 1 keV -> 20 MeV, avec les
+#    seuils d'absorption (K, L1-L3, M1-M5) explicitement decoupes en
+#    segments pour permettre une interpolation log-log correcte de part
+#    et d'autre de chaque seuil (voir _interp_segments).
 # =====================================================================
 
 # --- Bismuth (Z=83) : donnees NIST officielles completes -------------
-# Source : NIST XCOM / X-Ray Mass Attenuation Coefficients (physics.nist.gov)
 # Seuils : M5=2.57960, M4=2.68760, M3=3.17690, M2=3.69630, M1=3.99910,
 #          L3=13.4186, L2=15.7111, L1=16.3875, K=90.5259 keV
-# Plage : 1 keV -> 20 MeV.
 Bi_segments = [
     (1.00000, 2.57960, [(1.00000, 5.441e3), (1.50000, 2.468e3), (2.00000, 1.348e3),
                           (2.57960, 7.724e2)]),
@@ -55,10 +55,33 @@ Bi_segments = [
                           (10000.00000, 5.025e-2), (15000.00000, 5.721e-2), (20000.00000, 6.276e-2)]),
 ]
 
-# --- Oxygene, Carbone, Hydrogene : donnees NIST officielles completes --
-# Source : NIST XCOM / X-Ray Mass Attenuation Coefficients (physics.nist.gov)
-# Pas de seuil d'absorption dans cette plage (K de O/C/H < 1 keV, hors plage).
-# Plage : 1 keV -> 20 MeV.
+# --- Plomb (Z=82) -----------------
+Pb_segments = [
+    (1.00000, 2.48400, [(1.00000, 5.210e3), (1.50000, 2.356e3), (2.00000, 1.285e3),
+                          (2.48400, 8.006e2)]),
+    (2.48400, 2.58560, [(2.48400, 1.397e3), (2.53429, 1.726e3), (2.58560, 1.944e3)]),
+    (2.58560, 3.06640, [(2.58560, 2.458e3), (3.00000, 1.965e3), (3.06640, 1.857e3)]),
+    (3.06640, 3.55420, [(3.06640, 2.146e3), (3.30130, 1.796e3), (3.55420, 1.496e3)]),
+    (3.55420, 3.85070, [(3.55420, 1.585e3), (3.69948, 1.442e3), (3.85070, 1.311e3)]),
+    (3.85070, 13.0352, [(3.85070, 1.368e3), (4.00000, 1.251e3), (5.00000, 7.304e2),
+                          (6.00000, 4.672e2), (8.00000, 2.287e2), (10.00000, 1.306e2),
+                          (13.0352, 6.701e1)]),
+    (13.0352, 15.2000, [(13.0352, 1.621e2), (15.00000, 1.116e2), (15.2000, 1.078e2)]),
+    (15.2000, 15.8608, [(15.2000, 1.485e2), (15.5269, 1.416e2), (15.8608, 1.344e2)]),
+    (15.8608, 88.0045, [(15.8608, 1.548e2), (20.00000, 8.636e1), (30.00000, 3.032e1),
+                          (40.00000, 1.436e1), (50.00000, 8.041e0), (60.00000, 5.021e0),
+                          (80.00000, 2.419e0), (88.0045, 1.910e0)]),
+    (88.0045, 20000.00, [(88.0045, 7.683e0), (100.00000, 5.549e0), (150.00000, 2.014e0),
+                          (200.00000, 9.985e-1), (300.00000, 4.031e-1), (400.00000, 2.323e-1),
+                          (500.00000, 1.614e-1), (600.00000, 1.248e-1), (800.00000, 8.870e-2),
+                          (1000.00000, 7.102e-2), (1250.00000, 5.876e-2), (1500.00000, 5.222e-2),
+                          (2000.00000, 4.606e-2), (3000.00000, 4.234e-2), (4000.00000, 4.197e-2),
+                          (5000.00000, 4.272e-2), (6000.00000, 4.391e-2), (8000.00000, 4.675e-2),
+                          (10000.00000, 4.972e-2), (15000.00000, 5.658e-2), (20000.00000, 6.206e-2)]),
+]
+
+# --- Oxygene, Carbone, Hydrogene --
+# Pas de seuil d'absorption dans cette plage (K de O/C/H < 1 keV).
 O_data = [(1.00, 4.590e3), (1.50, 1.549e3), (2.00, 6.949e2), (3.00, 2.171e2),
           (4.00, 9.315e1), (5.00, 4.790e1), (6.00, 2.770e1), (8.00, 1.163e1),
           (10.00, 5.952e0), (15.00, 1.836e0), (20.00, 8.651e-1), (30.00, 3.779e-1),
@@ -88,41 +111,10 @@ H_data = [(1.00, 7.217e0), (1.50, 2.148e0), (2.00, 1.059e0), (3.00, 5.612e-1),
           (1000.00, 1.263e-1), (1250.00, 1.129e-1), (1500.00, 1.027e-1), (2000.00, 8.769e-2),
           (3000.00, 6.921e-2), (4000.00, 5.806e-2), (5000.00, 5.049e-2), (6000.00, 4.498e-2),
           (8000.00, 3.746e-2), (10000.00, 3.254e-2), (15000.00, 2.539e-2), (20000.00, 2.153e-2)]
-# --- Plomb (Z=82) : donnees NIST officielles completes -----------------
-# Source : NIST XCOM / X-Ray Mass Attenuation Coefficients (physics.nist.gov)
-# Seuils : M5=2.48400, M4=2.58560, M3=3.06640, M2=3.55420, M1=3.85070,
-#          L3=13.0352, L2=15.2000, L1=15.8608, K=88.0045 keV
-# Plage : 1 keV -> 20 MeV.
-Pb_segments = [
-    (1.00000, 2.48400, [(1.00000, 5.210e3), (1.50000, 2.356e3), (2.00000, 1.285e3),
-                          (2.48400, 8.006e2)]),
-    (2.48400, 2.58560, [(2.48400, 1.397e3), (2.53429, 1.726e3), (2.58560, 1.944e3)]),
-    (2.58560, 3.06640, [(2.58560, 2.458e3), (3.00000, 1.965e3), (3.06640, 1.857e3)]),
-    (3.06640, 3.55420, [(3.06640, 2.146e3), (3.30130, 1.796e3), (3.55420, 1.496e3)]),
-    (3.55420, 3.85070, [(3.55420, 1.585e3), (3.69948, 1.442e3), (3.85070, 1.311e3)]),
-    (3.85070, 13.0352, [(3.85070, 1.368e3), (4.00000, 1.251e3), (5.00000, 7.304e2),
-                          (6.00000, 4.672e2), (8.00000, 2.287e2), (10.00000, 1.306e2),
-                          (13.0352, 6.701e1)]),
-    (13.0352, 15.2000, [(13.0352, 1.621e2), (15.00000, 1.116e2), (15.2000, 1.078e2)]),
-    (15.2000, 15.8608, [(15.2000, 1.485e2), (15.5269, 1.416e2), (15.8608, 1.344e2)]),
-    (15.8608, 88.0045, [(15.8608, 1.548e2), (20.00000, 8.636e1), (30.00000, 3.032e1),
-                          (40.00000, 1.436e1), (50.00000, 8.041e0), (60.00000, 5.021e0),
-                          (80.00000, 2.419e0), (88.0045, 1.910e0)]),
-    (88.0045, 20000.00, [(88.0045, 7.683e0), (100.00000, 5.549e0), (150.00000, 2.014e0),
-                          (200.00000, 9.985e-1), (300.00000, 4.031e-1), (400.00000, 2.323e-1),
-                          (500.00000, 1.614e-1), (600.00000, 1.248e-1), (800.00000, 8.870e-2),
-                          (1000.00000, 7.102e-2), (1250.00000, 5.876e-2), (1500.00000, 5.222e-2),
-                          (2000.00000, 4.606e-2), (3000.00000, 4.234e-2), (4000.00000, 4.197e-2),
-                          (5000.00000, 4.272e-2), (6000.00000, 4.391e-2), (8000.00000, 4.675e-2),
-                          (10000.00000, 4.972e-2), (15000.00000, 5.658e-2), (20000.00000, 6.206e-2)]),
-]
 
-
-# --- Tungstene (Z=74) : donnees NIST officielles completes -------------
-# Source : NIST XCOM / X-Ray Mass Attenuation Coefficients (physics.nist.gov)
+# --- Tungstene (Z=74) -------------
 # Seuils : M5=1.80920, M4=1.87160, M3=2.28100, M2=2.57490, M1=2.81960,
 #          L3=10.2068, L2=11.5440, L1=12.0998, K=69.5250 keV
-# Plage : 1 keV -> 20 MeV. Remplace l'ancienne approximation 4-60 keV.
 W_segments = [
     (1.00000, 1.80920, [(1.00000, 3.683e3), (1.50000, 1.643e3), (1.80920, 1.108e3)]),
     (1.80920, 1.87160, [(1.80920, 1.327e3), (1.84014, 1.911e3), (1.87160, 2.901e3)]),
@@ -148,9 +140,6 @@ W_segments = [
 ]
 
 # --- Azote (Z=7) : donnees NIST officielles completes ------------------
-# Source : NIST XCOM / X-Ray Mass Attenuation Coefficients (physics.nist.gov)
-# Pas de seuil d'absorption dans cette plage (K de l'azote ~ 0.4 keV, hors plage).
-# Plage : 1 keV -> 20 MeV. Remplace l'ancien placeholder approximatif.
 N_data = [(1.00, 3.311e3), (1.50, 1.083e3), (2.00, 4.769e2), (3.00, 1.456e2),
           (4.00, 6.166e1), (5.00, 3.144e1), (6.00, 1.809e1), (8.00, 7.562e0),
           (10.00, 3.879e0), (15.00, 1.236e0), (20.00, 6.178e-1), (30.00, 3.066e-1),
@@ -161,23 +150,179 @@ N_data = [(1.00, 3.311e3), (1.50, 1.083e3), (2.00, 4.769e2), (3.00, 1.456e2),
           (3000.00, 3.579e-2), (4000.00, 3.073e-2), (5000.00, 2.742e-2), (6000.00, 2.511e-2),
           (8000.00, 2.209e-2), (10000.00, 2.024e-2), (15000.00, 1.782e-2), (20000.00, 1.673e-2)]
 
+# --- Tantale (Z=73) ---------------
+# Seuils : M5=1.73510, M4=1.79320, M3=2.19400, M2=2.46870, M1=2.70800,
+#          L3=9.8811, L2=11.1361, L1=11.6815, K=67.4164 keV
+Ta_segments = [
+    (1.00000, 1.73510, [(1.00000, 3.510e3), (1.50000, 1.566e3), (1.73510, 1.154e3)]),
+    (1.73510, 1.79320, [(1.73510, 1.417e3), (1.76391, 2.053e3), (1.79320, 3.082e3)]),
+    (1.79320, 2.19400, [(1.79320, 3.421e3), (2.00000, 3.771e3), (2.19400, 2.985e3)]),
+    (2.19400, 2.46870, [(2.19400, 3.464e3), (2.32730, 3.003e3), (2.46870, 2.604e3)]),
+    (2.46870, 2.70800, [(2.46870, 2.768e3), (2.58558, 2.486e3), (2.70800, 2.233e3)]),
+    (2.70800, 9.88110, [(2.70800, 2.329e3), (3.00000, 1.838e3), (4.00000, 9.222e2),
+                          (5.00000, 5.328e2), (6.00000, 3.382e2), (8.00000, 1.639e2),
+                          (9.88110, 9.599e1)]),
+    (9.88110, 11.1361, [(9.88110, 2.443e2), (10.00000, 2.379e2), (11.1361, 1.791e2)]),
+    (11.1361, 11.6815, [(11.1361, 2.449e2), (11.4055, 2.393e2), (11.6815, 2.182e2)]),
+    (11.6815, 67.4164, [(11.6815, 2.518e2), (15.00000, 1.340e2), (20.00000, 6.334e1),
+                          (30.00000, 2.187e1), (40.00000, 1.025e1), (50.00000, 5.717e0),
+                          (60.00000, 3.569e0), (67.4164, 2.652e0)]),
+    (67.4164, 20000.00, [(67.4164, 1.180e1), (80.00000, 7.587e0), (100.00000, 4.302e0),
+                          (150.00000, 1.531e0), (200.00000, 7.598e-1), (300.00000, 3.149e-1),
+                          (400.00000, 1.881e-1), (500.00000, 1.352e-1), (600.00000, 1.076e-1),
+                          (800.00000, 7.981e-2), (1000.00000, 6.567e-2), (1250.00000, 5.545e-2),
+                          (1500.00000, 4.977e-2), (2000.00000, 4.413e-2), (3000.00000, 4.057e-2),
+                          (4000.00000, 4.018e-2), (5000.00000, 4.082e-2), (6000.00000, 4.188e-2),
+                          (8000.00000, 4.446e-2), (10000.00000, 4.717e-2), (15000.00000, 5.350e-2),
+                          (20000.00000, 5.852e-2)]),
+]
+
+# --- Titane (Z=22) ----------------
+# Seuil : K=4.9664 keV (seul seuil dans la plage 1 keV - 20 MeV).
+Ti_segments = [
+    (1.00000, 4.96640, [(1.00000, 5.869e3), (1.50000, 2.096e3), (2.00000, 9.860e2),
+                          (3.00000, 3.323e2), (4.00000, 1.517e2), (4.96640, 8.380e1)]),
+    (4.96640, 20000.00, [(4.96640, 6.878e2), (5.00000, 6.838e2), (6.00000, 4.323e2),
+                          (8.00000, 2.023e2), (10.00000, 1.107e2), (15.00000, 3.587e1),
+                          (20.00000, 1.585e1), (30.00000, 4.972e0), (40.00000, 2.214e0),
+                          (50.00000, 1.213e0), (60.00000, 7.661e-1), (80.00000, 4.052e-1),
+                          (100.00000, 2.721e-1), (150.00000, 1.649e-1), (200.00000, 1.314e-1),
+                          (300.00000, 1.043e-1), (400.00000, 9.081e-2), (500.00000, 8.191e-2),
+                          (600.00000, 7.529e-2), (800.00000, 6.572e-2), (1000.00000, 5.891e-2),
+                          (1250.00000, 5.263e-2), (1500.00000, 4.801e-2), (2000.00000, 4.180e-2),
+                          (3000.00000, 3.512e-2), (4000.00000, 3.173e-2), (5000.00000, 2.982e-2),
+                          (6000.00000, 2.868e-2), (8000.00000, 2.759e-2), (10000.00000, 2.727e-2),
+                          (15000.00000, 2.762e-2), (20000.00000, 2.844e-2)]),
+]
+
+# --- Or (Z=79) --------------------
+# Seuils : M5=2.20570, M4=2.29110, M3=2.74300, M2=3.14780, M1=3.42490,
+#          L3=11.9187, L2=13.7336, L1=14.3528, K=80.7249 keV
+Au_segments = [
+    (1.00000, 2.20570, [(1.00000, 4.652e3), (1.50000, 2.089e3), (2.00000, 1.137e3),
+                          (2.20570, 9.187e2)]),
+    (2.20570, 2.29110, [(2.20570, 9.971e2), (2.24799, 1.386e3), (2.29110, 2.258e3)]),
+    (2.29110, 2.74300, [(2.29110, 2.389e3), (2.50689, 2.380e3), (2.74300, 2.203e3)]),
+    (2.74300, 3.14780, [(2.74300, 2.541e3), (3.00000, 2.049e3), (3.14780, 1.822e3)]),
+    (3.14780, 3.42490, [(3.14780, 1.933e3), (3.28343, 1.748e3), (3.42490, 1.585e3)]),
+    (3.42490, 11.9187, [(3.42490, 1.652e3), (4.00000, 1.144e3), (5.00000, 6.661e2),
+                          (6.00000, 4.253e2), (8.00000, 2.072e2), (10.00000, 1.181e2),
+                          (11.9187, 7.582e1)]),
+    (11.9187, 13.7336, [(11.9187, 1.870e2), (12.7940, 1.546e2), (13.7336, 1.283e2)]),
+    (13.7336, 14.3528, [(13.7336, 1.764e2), (14.0398, 1.766e2), (14.3528, 1.588e2)]),
+    (14.3528, 80.7249, [(14.3528, 1.830e2), (15.00000, 1.637e2), (20.00000, 7.883e1),
+                          (30.00000, 2.752e1), (40.00000, 1.298e1), (50.00000, 7.256e0),
+                          (60.00000, 4.528e0), (80.00000, 2.185e0), (80.7249, 2.137e0)]),
+    (80.7249, 20000.00, [(80.7249, 8.904e0), (100.00000, 5.158e0), (150.00000, 1.860e0),
+                          (200.00000, 9.214e-1), (300.00000, 3.744e-1), (400.00000, 2.180e-1),
+                          (500.00000, 1.530e-1), (600.00000, 1.194e-1), (800.00000, 8.603e-2),
+                          (1000.00000, 6.953e-2), (1250.00000, 5.794e-2), (1500.00000, 5.167e-2),
+                          (2000.00000, 4.570e-2), (3000.00000, 4.201e-2), (4000.00000, 4.166e-2),
+                          (5000.00000, 4.239e-2), (6000.00000, 4.355e-2), (8000.00000, 4.633e-2),
+                          (10000.00000, 4.926e-2), (15000.00000, 5.598e-2), (20000.00000, 6.136e-2)]),
+]
+
+# --- Baryum (Z=56) -----------------
+# Seuils : M3=1.06220, M2=1.13670, M1=1.29280,
+#          L3=5.24700, L2=5.62360, L1=5.98880, K=37.4406 keV
+Ba_segments = [
+    (1.00000, 1.06220, [(1.00000, 8.543e3), (1.03063, 7.990e3), (1.06220, 7.465e3)]),
+    (1.06220, 1.13670, [(1.06220, 8.547e3), (1.09882, 7.957e3), (1.13670, 7.404e3)]),
+    (1.13670, 1.29280, [(1.13670, 7.837e3), (1.21224, 6.861e3), (1.29280, 5.985e3)]),
+    (1.29280, 5.24700, [(1.29280, 6.255e3), (1.50000, 4.499e3), (2.00000, 2.319e3),
+                          (3.00000, 8.696e2), (4.00000, 4.246e2), (5.00000, 2.414e2),
+                          (5.24700, 2.135e2)]),
+    (5.24700, 5.62360, [(5.24700, 6.098e2), (5.43204, 5.634e2), (5.62360, 5.169e2)]),
+    (5.62360, 5.98880, [(5.62360, 7.016e2), (5.80333, 6.507e2), (5.98880, 6.013e2)]),
+    (5.98880, 37.4406, [(5.98880, 6.930e2), (6.00000, 6.898e2), (8.00000, 3.334e2),
+                          (10.00000, 1.860e2), (15.00000, 6.347e1), (20.00000, 2.938e1),
+                          (30.00000, 9.904e0), (37.4406, 5.498e0)]),
+    (37.4406, 20000.00, [(37.4406, 2.919e1), (40.00000, 2.457e1), (50.00000, 1.379e1),
+                          (60.00000, 8.511e0), (80.00000, 3.963e0), (100.00000, 2.196e0),
+                          (150.00000, 7.828e-1), (200.00000, 4.046e-1), (300.00000, 1.891e-1),
+                          (400.00000, 1.265e-1), (500.00000, 9.923e-2), (600.00000, 8.410e-2),
+                          (800.00000, 6.744e-2), (1000.00000, 5.803e-2), (1250.00000, 5.058e-2),
+                          (1500.00000, 4.592e-2), (2000.00000, 4.078e-2), (3000.00000, 3.692e-2),
+                          (4000.00000, 3.598e-2), (5000.00000, 3.612e-2), (6000.00000, 3.669e-2),
+                          (8000.00000, 3.844e-2), (10000.00000, 4.042e-2), (15000.00000, 4.518e-2),
+                          (20000.00000, 4.902e-2)]),
+]
+
+# --- Platine (Z=78) ----------------
+# Seuils : M5=2.12160, M4=2.20190, M3=2.64540, M2=3.02650, M1=3.29600,
+#          L3=11.5637, L2=13.2726, L1=13.8799, K=78.3948 keV
+Pt_segments = [
+    (1.00000, 2.12160, [(1.00000, 4.433e3), (1.50000, 1.986e3), (2.00000, 1.081e3),
+                          (2.12160, 9.506e2)]),
+    (2.12160, 2.20190, [(2.12160, 1.034e3), (2.16138, 1.431e3), (2.20190, 2.341e3)]),
+    (2.20190, 2.64540, [(2.20190, 2.487e3), (2.41348, 2.512e3), (2.64540, 2.307e3)]),
+    (2.64540, 3.02650, [(2.64540, 2.663e3), (3.00000, 1.965e3), (3.02650, 1.923e3)]),
+    (3.02650, 3.29600, [(3.02650, 2.041e3), (3.15838, 1.844e3), (3.29600, 1.671e3)]),
+    (3.29600, 11.5637, [(3.29600, 1.742e3), (4.00000, 1.100e3), (5.00000, 6.402e2),
+                          (6.00000, 4.083e2), (8.00000, 1.987e2), (10.00000, 1.132e2),
+                          (11.5637, 7.844e1)]),
+    (11.5637, 13.2726, [(11.5637, 1.946e2), (12.3887, 1.618e2), (13.2726, 1.349e2)]),
+    (13.2726, 13.8799, [(13.2726, 1.853e2), (13.5729, 1.848e2), (13.8799, 1.666e2)]),
+    (13.8799, 78.3948, [(13.8799, 1.921e2), (15.00000, 1.578e2), (20.00000, 7.574e1),
+                          (30.00000, 2.641e1), (40.00000, 1.245e1), (50.00000, 6.954e0),
+                          (60.00000, 4.339e0), (78.3948, 2.203e0)]),
+    (78.3948, 20000.00, [(78.3948, 9.301e0), (80.00000, 8.731e0), (100.00000, 4.993e0),
+                          (150.00000, 1.795e0), (200.00000, 8.896e-1), (300.00000, 3.625e-1),
+                          (400.00000, 2.118e-1), (500.00000, 1.492e-1), (600.00000, 1.168e-1),
+                          (800.00000, 8.456e-2), (1000.00000, 6.857e-2), (1250.00000, 5.727e-2),
+                          (1500.00000, 5.112e-2), (2000.00000, 4.522e-2), (3000.00000, 4.160e-2),
+                          (4000.00000, 4.124e-2), (5000.00000, 4.196e-2), (6000.00000, 4.310e-2),
+                          (8000.00000, 4.584e-2), (10000.00000, 4.872e-2), (15000.00000, 5.537e-2),
+                          (20000.00000, 6.064e-2)]),
+]
+
+# --- Soufre (Z=16)  -----------------
+# Seuil : K=2.47200 keV (utilise pour composer BaSO4).
+S_segments = [
+    (1.00000, 2.47200, [(1.00000, 2.429e3), (1.50000, 8.342e2), (2.00000, 3.853e2),
+                          (2.47200, 2.168e2)]),
+    (2.47200, 20000.00, [(2.47200, 2.070e3), (3.00000, 1.339e3), (4.00000, 6.338e2),
+                          (5.00000, 3.487e2), (6.00000, 2.116e2), (8.00000, 9.465e1),
+                          (10.00000, 5.012e1), (15.00000, 1.550e1), (20.00000, 6.708e0),
+                          (30.00000, 2.113e0), (40.00000, 9.872e-1), (50.00000, 5.849e-1),
+                          (60.00000, 4.053e-1), (80.00000, 2.585e-1), (100.00000, 2.020e-1),
+                          (150.00000, 1.506e-1), (200.00000, 1.302e-1), (300.00000, 1.091e-1),
+                          (400.00000, 9.665e-2), (500.00000, 8.781e-2), (600.00000, 8.102e-2),
+                          (800.00000, 7.098e-2), (1000.00000, 6.373e-2), (1250.00000, 5.697e-2),
+                          (1500.00000, 5.193e-2), (2000.00000, 4.498e-2), (3000.00000, 3.715e-2),
+                          (4000.00000, 3.293e-2), (5000.00000, 3.036e-2), (6000.00000, 2.872e-2),
+                          (8000.00000, 2.682e-2), (10000.00000, 2.589e-2), (15000.00000, 2.517e-2),
+                          (20000.00000, 2.529e-2)]),
+]
+
 M = {"Bi": 208.98038, "O": 15.999, "C": 12.011, "H": 1.008,
-     "W": 183.84, "N": 14.007, "Pb": 207.2}
+     "W": 183.84, "N": 14.007, "Pb": 207.2,
+     "Ta": 180.94788, "Au": 196.96657, "Ba": 137.327, "S": 32.06,
+     "Pt": 195.084, "Ti": 47.867}
+
+
+# Densités (g/cm3)
 
 RHO_PEEK = 1.30
 RHO_BI2O3 = 8.90
-RHO_W = 19.25       # tungstene pur (element)
-# ATTENTION - TPU : densite typique 1.10-1.25 g/cm3 selon le grade -> a ajuster
+RHO_W = 19.25       
 RHO_TPU = 1.20
-RHO_PB = 11.35      # plomb pur (element)
+RHO_PB = 11.35      
+RHO_TA = 16.65      
+RHO_BI_PUR = 9.78   
+RHO_AU = 19.32      
+RHO_BA = 3.51       
+RHO_BASO4 = 4.50    
+RHO_PT = 21.45     
+RHO_TI = 4.51       
 
 
 
 
 # =====================================================================
-# 1bis. DONNEES NIST : mu_en/rho (cm2/g), coefficient d'absorption
-#       d'energie massique -> utile pour calculs de dose (radioprotection)
-#       Meme structure/decoupage que les tables mu/rho ci-dessus.
+#  DONNEES NIST : mu_en/rho (cm2/g), coefficient d'absorption
+#  d'energie massique -> utile pour calculs de dose (radioprotection)
+#  Meme structure/decoupage que les tables mu/rho ci-dessus.
 # =====================================================================
 
 W_muen_segments = [
@@ -261,11 +406,9 @@ def _interp_segments(E_keV, segments):
     return _interp_loglog(E_keV, segments[-1][2])
 
 def mu_rho_Bi(E_keV):
-    """Donnees NIST officielles completes (1 keV - 20 MeV), seuils M5-K inclus."""
     return _interp_segments(E_keV, Bi_segments)
 
 def mu_rho_W(E_keV):
-    """Donnees NIST officielles completes (1 keV - 20 MeV), seuils M5-K inclus."""
     return _interp_segments(E_keV, W_segments)
 
 def mu_rho_O(E_keV):
@@ -278,19 +421,32 @@ def mu_rho_H(E_keV):
     return _interp_loglog(E_keV, H_data)
 
 def mu_rho_N(E_keV):
-    """Donnees NIST officielles completes (1 keV - 20 MeV)."""
     return _interp_loglog(E_keV, N_data)
 
 def mu_rho_Pb(E_keV):
-    """Donnees NIST officielles completes (1 keV - 20 MeV), seuils M5-K inclus."""
     return _interp_segments(E_keV, Pb_segments)
+
+def mu_rho_Ta(E_keV):
+    return _interp_segments(E_keV, Ta_segments)
+
+def mu_rho_Ti(E_keV):
+    return _interp_segments(E_keV, Ti_segments)
+
+def mu_rho_Au(E_keV):
+    return _interp_segments(E_keV, Au_segments)
+
+def mu_rho_Ba(E_keV):
+    return _interp_segments(E_keV, Ba_segments)
+
+def mu_rho_Pt(E_keV):
+    return _interp_segments(E_keV, Pt_segments)
+
+def mu_rho_S(E_keV):
+    return _interp_segments(E_keV, S_segments)
 
 
 # --- Coefficients d'absorption d'energie massique mu_en/rho (cm2/g) ----
 # Disponibles pour l'instant pour N, W et Pb (donnees NIST fournies).
-# Pour un calcul de dose complet sur le composite PEEK/Bi2O3, il manque
-# encore Bi, O, C, H en mu_en/rho -> a ajouter si besoin (memes tableaux
-# NIST, colonne "mu_en/rho").
 def muen_rho_W(E_keV):
     """mu_en/rho du tungstene (cm2/g), donnees NIST 1 keV - 20 MeV."""
     return _interp_segments(E_keV, W_muen_segments)
@@ -308,6 +464,8 @@ def muen_rho_Pb(E_keV):
 ELEMENTS = {
     "Bi": mu_rho_Bi, "O": mu_rho_O, "C": mu_rho_C, "H": mu_rho_H,
     "W": mu_rho_W, "N": mu_rho_N, "Pb": mu_rho_Pb,
+    "Ta": mu_rho_Ta, "Ti": mu_rho_Ti, "Au": mu_rho_Au, "Ba": mu_rho_Ba,
+    "Pt": mu_rho_Pt, "S": mu_rho_S,
 }
 
 # Registre partiel pour mu_en/rho (voir note ci-dessus : Bi, O, C, H manquants)
@@ -323,29 +481,53 @@ def fractions_massiques(formule):
     M_tot = sum(n * M[el] for el, n in formule.items())
     return {el: (n * M[el]) / M_tot for el, n in formule.items()}
 
-# --- Charges (element lourd) -------------------------------------------
-w_Bi2O3 = fractions_massiques({"Bi": 2, "O": 3})
-w_W = fractions_massiques({"W": 1})  # tungstene pur -> 100% W
-w_Pb = fractions_massiques({"Pb": 1})  # plomb pur -> 100% Pb
+# --- Charges (element lourd ou compose) --------------------------------
+w_Bi2O3 = fractions_massiques({"Bi": 2, "O": 3}) # oxide de bismuth
+w_W = fractions_massiques({"W": 1})       # tungstene pur -> 100% W
+w_Pb = fractions_massiques({"Pb": 1})     
+w_Ta = fractions_massiques({"Ta": 1})     
+w_Bi_pur = fractions_massiques({"Bi": 1}) 
+w_Au = fractions_massiques({"Au": 1})    
+w_Ba = fractions_massiques({"Ba": 1})     
+w_BaSO4 = fractions_massiques({"Ba": 1, "S": 1, "O": 4}) 
+w_Pt = fractions_massiques({"Pt": 1})     
+w_Ti = fractions_massiques({"Ti": 1})     
 
 CHARGES = {
     "Bi2O3": {"densite": RHO_BI2O3, "fractions": w_Bi2O3, "nom_affiche": "Bi2O3"},
     "W":     {"densite": RHO_W,     "fractions": w_W,     "nom_affiche": "Tungstène (W)"},
     "Pb":    {"densite": RHO_PB,    "fractions": w_Pb,    "nom_affiche": "Plomb (Pb)"},
+    "Ta":    {"densite": RHO_TA,    "fractions": w_Ta,    "nom_affiche": "Tantale (Ta)"},
+    "Bi":    {"densite": RHO_BI_PUR,"fractions": w_Bi_pur,"nom_affiche": "Bismuth (Bi)"},
+    "Au":    {"densite": RHO_AU,    "fractions": w_Au,    "nom_affiche": "Or (Au)"},
+    "Ba":    {"densite": RHO_BA,    "fractions": w_Ba,    "nom_affiche": "Baryum (Ba)"},
+    "BaSO4": {"densite": RHO_BASO4, "fractions": w_BaSO4, "nom_affiche": "Sulfate de baryum (BaSO4)"},
+    "Pt":    {"densite": RHO_PT,    "fractions": w_Pt,    "nom_affiche": "Platine (Pt)"},
+    "Ti":    {"densite": RHO_TI,    "fractions": w_Ti,    "nom_affiche": "Titane (Ti)"},
+}
+
+# --- Seuils d'absorption (K, L, M) par charge, en keV -------------------
+# Utilises pour tracer des reperes verticaux sur les graphiques mu/rho et
+# % attenuation vs energie. Les composes (BaSO4) reprennent les seuils de
+# l'element lourd dominant (Ba).
+SEUILS_ABSORPTION = {
+    "Bi2O3": [13.4186, 15.7111, 16.3875, 90.5259],
+    "Bi":    [13.4186, 15.7111, 16.3875, 90.5259],
+    "W":     [10.2068, 11.5440, 12.0998, 69.5250],
+    "Pb":    [13.0352, 15.2000, 15.8608, 88.0045],
+    "Ta":    [9.8811, 11.1361, 11.6815, 67.4164],
+    "Au":    [11.9187, 13.7336, 14.3528, 80.7249],
+    "Ba":    [5.2470, 5.6236, 5.9888, 37.4406],
+    "BaSO4": [5.2470, 5.6236, 5.9888, 37.4406],
+    "Pt":    [11.5637, 13.2726, 13.8799, 78.3948],
+    "Ti":    [4.9664],
 }
 
 # --- Matrices (polymere) ------------------------------------------------
 w_PEEK = fractions_massiques({"C": 19, "H": 12, "O": 3})
 
-# ATTENTION - Composition TPU APPROXIMATIVE - la formule/composition exacte
-# varie beaucoup selon le grade (polyester vs polyether, durete Shore, etc.).
-# Remplacer par les fractions massiques reelles de VOTRE TPU (fiche
-# technique / analyse elementaire CHN) avant utilisation finale.
+# Peut-être à checker avec Noah?
 w_TPU = {"C": 0.63, "H": 0.08, "N": 0.04, "O": 0.25}
-
-# --- Nouvelles Matrices (PLA et PETG) ---
-# Formules chimiques : PLA (C3H4O2)n, PETG (C10H8O4)n approximatif
-# Les fractions sont calculées via la masse molaire.
 
 # PLA (C3 H4 O2) : M_total = 3*12.011 + 4*1.008 + 2*15.999 = 72.063
 w_PLA = {"C": (3*12.011)/72.063, "H": (4*1.008)/72.063, "O": (2*15.999)/72.063}
@@ -364,6 +546,8 @@ MATRICES = {
     "PETG": {"densite": RHO_PETG, "fractions": w_PETG, "nom_affiche": "PETG"},
 }
 
+# mu rho des composites charge + matrice
+
 
 def mu_rho_charge(E_keV, nom_charge="Bi2O3"):
     frac = CHARGES[nom_charge]["fractions"]
@@ -373,7 +557,6 @@ def mu_rho_matrice(E_keV, nom_matrice="PEEK"):
     frac = MATRICES[nom_matrice]["fractions"]
     return sum(w * ELEMENTS[el](E_keV) for el, w in frac.items())
 
-# --- Alias retro-compatibles (anciens noms utilises dans le reste du code) ---
 def mu_rho_Bi2O3(E_keV):
     return mu_rho_charge(E_keV, "Bi2O3")
 
@@ -389,6 +572,22 @@ def mu_rho_PETG(E_keV):
 def mu_rho_composite(E_keV, w_frac_charge, nom_charge="Bi2O3", nom_matrice="PEEK"):
     return (w_frac_charge * mu_rho_charge(E_keV, nom_charge) +
             (1 - w_frac_charge) * mu_rho_matrice(E_keV, nom_matrice))
+
+def mu_rho_composite_vs_spectre(E_array, w_frac_charge, nom_charge="Bi2O3", nom_matrice="PEEK"):
+    """
+    Calcule (mu/rho) du composite a CHAQUE energie du spectre source
+    (E_array)
+
+    Utile pour visualiser directement, pour la source actuellement chargee
+    (Pd-103, I-125, ou fichier SpekCalc), la valeur de mu/rho aux energies
+    reellement presentes dans le faisceau.
+
+    Retourne un array mu_rho_vals, meme taille que E_array.
+    """
+    return np.array([
+        mu_rho_composite(E, w_frac_charge, nom_charge=nom_charge, nom_matrice=nom_matrice)
+        for E in E_array
+    ])
 
 
 # =====================================================================
@@ -406,27 +605,6 @@ def LAC_composite(E_keV, w_frac_charge, nom_charge="Bi2O3", nom_matrice="PEEK"):
             densite_composite(w_frac_charge, nom_charge, nom_matrice))
 
 
-
-
-def mu_rho_composite_vs_spectre(E_array, w_frac_charge, nom_charge="Bi2O3", nom_matrice="PEEK"):
-    """
-    Calcule (mu/rho) du composite a CHAQUE energie du spectre source
-    (E_array), plutot que sur un axe continu arbitraire (4-60 keV).
-
-    Utile pour visualiser directement, pour la source actuellement chargee
-    (Pd-103, I-125, ou fichier SpekCalc), la valeur de mu/rho aux energies
-    reellement presentes dans le faisceau.
-
-    Retourne un array mu_rho_vals, meme taille que E_array.
-    """
-    return np.array([
-        mu_rho_composite(E, w_frac_charge, nom_charge=nom_charge, nom_matrice=nom_matrice)
-        for E in E_array
-    ])
-
-
-
-
 # =====================================================================
 # GRAPHIQUES COMMUNS
 # =====================================================================
@@ -437,17 +615,20 @@ def graphique_mu_rho_elements():
     plt.plot(E_plot, [mu_rho_Bi(e) for e in E_plot], label="Bi", color="tab:red")
     plt.plot(E_plot, [mu_rho_Pb(e) for e in E_plot], label="Pb", color="tab:gray")
     plt.plot(E_plot, [mu_rho_W(e) for e in E_plot], label="W", color="tab:brown")
+    plt.plot(E_plot, [mu_rho_Ta(e) for e in E_plot], label="Ta", color="tab:pink")
+    plt.plot(E_plot, [mu_rho_Au(e) for e in E_plot], label="Au", color="gold")
+    plt.plot(E_plot, [mu_rho_Ba(e) for e in E_plot], label="Ba", color="tab:olive")
+    plt.plot(E_plot, [mu_rho_Pt(e) for e in E_plot], label="Pt", color="tab:cyan")
+    plt.plot(E_plot, [mu_rho_Ti(e) for e in E_plot], label="Ti", color="tab:purple")
     plt.plot(E_plot, [mu_rho_O(e) for e in E_plot], label="O", color="tab:blue")
     plt.plot(E_plot, [mu_rho_C(e) for e in E_plot], label="C", color="tab:green")
     plt.plot(E_plot, [mu_rho_H(e) for e in E_plot], label="H", color="tab:orange")
-    plt.plot(E_plot, [mu_rho_N(e) for e in E_plot], label="N", color="tab:cyan")
-    for seuil in (13.4186, 15.7111, 16.3875, 10.207, 11.544, 12.100):
-        plt.axvline(seuil, color="gray", linestyle="--", linewidth=0.6)
+    plt.plot(E_plot, [mu_rho_N(e) for e in E_plot], label="N", color="black")
     plt.yscale("log")
     plt.xlabel("Energie (keV)")
     plt.ylabel(r"$\mu/\rho$ (cm$^2$/g)")
-    plt.title("mu/rho des elements purs (seuils L en pointilles)")
-    plt.legend()
+    plt.title("mu/rho des elements purs")
+    plt.legend(fontsize=8)
     plt.grid(True, which="both", alpha=0.3)
     plt.tight_layout()
     plt.show()
@@ -464,7 +645,7 @@ def graphique_mu_rho_composite(w_frac_charge, nom_charge="Bi2O3", nom_matrice="P
              label=f"{nom_matrice_aff} pur", color="tab:blue")
     plt.plot(E_plot, [mu_rho_composite(e, w_frac_charge, nom_charge, nom_matrice) for e in E_plot],
              label=f"Composite ({w_frac_charge*100:.0f}% {nom_charge_aff})", color="black", linewidth=2)
-    for seuil in (13.4186, 15.7111, 16.3875, 10.207, 11.544, 12.100):
+    for seuil in SEUILS_ABSORPTION.get(nom_charge, []):
         plt.axvline(seuil, color="gray", linestyle=":", linewidth=0.6)
     plt.yscale("log")
     plt.xlabel("Energie (keV)")
@@ -482,7 +663,7 @@ def graphique_LAC_composite(w_frac_charge, nom_charge="Bi2O3", nom_matrice="PEEK
     plt.figure(figsize=(8, 5))
     plt.plot(E_plot, [LAC_composite(e, w_frac_charge, nom_charge, nom_matrice) for e in E_plot],
              color="tab:purple", linewidth=2)
-    for seuil in (13.4186, 15.7111, 16.3875, 10.207, 11.544, 12.100):
+    for seuil in SEUILS_ABSORPTION.get(nom_charge, []):
         plt.axvline(seuil, color="gray", linestyle="--", linewidth=0.6)
     plt.yscale("log")
     plt.xlabel("Energie (keV)")
